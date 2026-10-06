@@ -17,7 +17,7 @@ jobs:
       platforms: ${{ steps.release.outputs.platforms }}
       license: ${{ steps.release.outputs.license }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
@@ -47,7 +47,7 @@ jobs:
     # Configure required reviewers. This environment owns the Docker Hub token.
     environment: dockerhub
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
