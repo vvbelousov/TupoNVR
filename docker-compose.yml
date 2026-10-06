@@ -1,0 +1,49 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.1
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "${WEBRTC_PORT:-8889}:8889/tcp"
+      - "${WEBRTC_UDP_PORT:-8189}:${WEBRTC_UDP_PORT:-8189}/udp"
+    environment:
+      MTX_WEBRTCLOCALUDPADDRESS: ":${WEBRTC_UDP_PORT:-8189}"
+      MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_HOST:-127.0.0.1}
+  nvr-app:
+    image: ${NVR_IMAGE:-tuponvr:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    init: true
+    user: "${NVR_UID:-0}:${NVR_GID:-0}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+    depends_on:
+      - mediamtx
+    environment:
+      DATABASE_PATH: /data/nvr.sqlite3
+      DEFAULT_RECORDING_PATH: /recordings
+      MEDIAMTX_API: http://mediamtx:9997
+      MIN_FREE_SPACE_GB: ${MIN_FREE_SPACE_GB:-5}
+      SEGMENT_SECONDS: ${SEGMENT_SECONDS:-600}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WEBRTC_PORT: ${WEBRTC_PORT:-8889}
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-en}
+      APP_TIMEZONE: ${APP_TIMEZONE:-UTC}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:-}
+      WEBHOOK_DEBOUNCE_SECONDS: ${WEBHOOK_DEBOUNCE_SECONDS:-60}
+      WEBHOOK_COOLDOWN_SECONDS: ${WEBHOOK_COOLDOWN_SECONDS:-600}
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ${DEFAULT_RECORDING_PATH:-./recordings}:/recordings
+    ports:
+      - "${NVR_PORT:-8080}:8000/tcp"
+    stop_grace_period: 45s

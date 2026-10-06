@@ -1,0 +1,6 @@
+# Use together with docker-compose.yml; the application is pulled, never built.
+# docker compose -f docker-compose.yml -f compose.image.yml up -d --no-build
+services:
+  nvr-app:
+    image: ${NVR_IMAGE:?Set NVR_IMAGE to the published Docker Hub image and version}
+    pull_policy: always

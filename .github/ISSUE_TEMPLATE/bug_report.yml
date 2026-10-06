@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible TupoNVR problem.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include passwords, private RTSP URLs, tokens, recordings, or unredacted logs. Report security vulnerabilities through SECURITY.md.
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include expected behavior and reproduction steps.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Application version, OS/CPU architecture, Docker/Compose versions, browser, camera codec, and local or network storage.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Redacted diagnostics
+      description: Relevant status messages or logs with private details removed.

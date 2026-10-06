@@ -1,0 +1,252 @@
+import {useSyncExternalStore} from 'react';
+import {applicationTimezone,useTimezone} from './time';
+
+export type Language = 'en' | 'ru';
+const preferenceKey = 'nvr-language';
+const validLanguage = (value:unknown):value is Language => value==='en'||value==='ru';
+let language:Language = 'en';
+const listeners = new Set<()=>void>();
+
+// English is the source language; one small catalog keeps the UI dependency-free.
+const ru:Record<string,string> = {
+  'Choose an archive date':'Выберите дату архива',
+  "Appliance time":"Время устройства",
+  "Timezone":"Часовой пояс",
+  "Current local time":"Текущее местное время",
+  "Change timezone":"Изменить часовой пояс",
+  "Save timezone":"Сохранить часовой пояс",
+  "Applies to displayed times, archive dates and every recording schedule. Existing recording timestamps stay unchanged.":"Применяется ко времени в интерфейсе, датам архива и всем расписаниям записи. Метки времени существующих записей не изменяются.",
+  "Timezone saved. Recording schedules now use this timezone.":"Часовой пояс сохранён. Расписания записи используют этот часовой пояс.",
+  "Schedule timezone":"Часовой пояс расписания",
+  "Uses the installation timezone configured on Overview.":"Используется часовой пояс устройства, настроенный на странице «Обзор».",
+  "Find footage by camera, date and time in the installation timezone.":"Поиск записи по камерам, дате и времени в часовом поясе устройства.",
+  "Choose cameras…":"Выберите камеры…",
+  "Multiple cameras":"Несколько камер",
+  "Archive date":"Дата архива",
+  "Archive time":"Время архива",
+  "Play selected cameras":"Смотреть выбранные камеры",
+  "Selected cameras: {count}":"Выбрано камер: {count}",
+  "Select all":"Выбрать все",
+  "Clear":"Очистить",
+  "This local time occurs twice. Choose an offset.":"Это местное время встречается дважды. Выберите смещение UTC.",
+  "Repeated local time":"Повторяющееся местное время",
+  "Choose an offset…":"Выберите смещение…",
+  "Timezone changed; choose the local time again.":"Часовой пояс изменился; выберите местное время заново.",
+  "Preparing synchronized playback…":"Подготовка синхронного просмотра…",
+  "Daily recordings":"Запись за сутки",
+  "Recordings for {name}":"Записи камеры {name}",
+  "Play":"Воспроизвести",
+  "Pause":"Пауза",
+  "Speed":"Скорость",
+  "Choose cameras to watch":"Выберите камеры для просмотра",
+  "Select one or more cameras, then choose a date and time.":"Выберите одну или несколько камер, затем дату и время.",
+  "Focus":"Увеличить",
+  "Return to grid":"Вернуться к сетке",
+  "Footage resumes at {time}":"Запись возобновляется в {time}",
+  "Use the timeline to choose another moment.":"Выберите другой момент на шкале времени.",
+  "Recordings":"Записи",
+  "End of the selected cameras’ archive.":"Архив выбранных камер закончился.",
+  "Automatic playback paused at the segment boundary.":"Автопереход приостановлен на границе файла.",
+  "Playback blocked. Pause and press Play to retry.":"Просмотр заблокирован. Нажмите «Пауза», затем «Воспроизвести» для повторной попытки.",
+  "Recording lookup failed; retrying…":"Не удалось найти запись; повторная попытка…",
+  "File unavailable or codec unsupported by the browser.":"Файл недоступен или кодек не поддерживается браузером.",
+  "This local time does not exist because of a timezone transition":"Это местное время отсутствует из-за перехода часового пояса",
+  "This local date does not exist in the configured timezone":"Эта местная дата отсутствует в настроенном часовом поясе",
+  "Local date and time must not contain a timezone offset":"Местные дата и время не должны содержать смещение часового пояса",
+  "Cannot save timezone configuration":"Не удалось сохранить настройку часового пояса",
+  "Leave blank to keep existing password":"Оставьте пустым, чтобы сохранить пароль",
+  "Saved URL query options are kept unless you supply new options.":"Сохранённые параметры URL сохраняются, пока вы не зададите новые.",
+  "Create protection ID":"Создать ID защиты",
+  "Use existing ID":"Использовать существующий ID",
+  "Manual configuration":"Ручная настройка",
+  "Storage protection prevents recording into a local fallback directory if an external mount disappears. Connect the correct storage before creating or adopting its ID.":"Защита хранилища предотвращает запись в локальный каталог, если внешний ресурс отключится. Перед созданием или использованием ID подключите нужное хранилище.",
+  "Create .nvr-storage-id on the intended storage with 1–128 letters, digits, underscores or hyphens, then enter that value below. A blank expected ID disables protection.":"Создайте .nvr-storage-id на нужном хранилище: 1–128 латинских букв, цифр, подчёркиваний или дефисов. Введите это значение ниже. Пустой ожидаемый ID отключает защиту.",
+  "Change protection for {name}? Confirm the correct storage is connected. A blank ID disables protection.":"Изменить защиту {name}? Убедитесь, что подключено нужное хранилище. Пустой ID отключает защиту.",
+  "Use the ID on {name}? This explicitly replaces the expected ID if it differs. Confirm the correct storage is connected.":"Использовать ID на {name}? Ожидаемый ID будет заменён, если он отличается. Убедитесь, что подключено нужное хранилище.",
+  "Create protection on {name}? Confirm the correct storage is connected.":"Создать защиту {name}? Убедитесь, что подключено нужное хранилище.",
+  "{name} is not a separate mount. Continue only if this is intentional local storage; do not initialize a missing external mount.":"{name} не является отдельной точкой монтирования. Продолжайте только для намеренно локального хранилища; не создавайте ID вместо отсутствующего внешнего ресурса.",
+  "Protection configuration saved; check storage status.":"Настройка защиты сохранена; проверьте состояние хранилища.",
+  "Protection verified.":"Защита проверена.",
+  "Protection configured; storage is not ready. Check its status.":"Защита настроена; хранилище не готово. Проверьте его состояние.",
+  "Storage destination not configured":"Каталог записи не настроен",
+  "Storage configuration changed; refresh and retry":"Настройка хранилища изменилась; обновите данные и повторите",
+  "Protection already configured; use existing ID or manual setup":"Защита уже настроена; используйте существующий ID или ручную настройку",
+  "Protection ID already exists; use existing ID":"ID защиты уже существует; используйте существующий ID",
+  "Destination is not mounted; confirm local storage explicitly":"Хранилище не смонтировано; явно подтвердите локальное хранилище",
+  "Protection ID is empty or malformed":"ID защиты пуст или имеет неверный формат",
+  "Storage unavailable or protection operation failed":"Хранилище недоступно или операция защиты не удалась",
+  "Storage ID mismatch; confirm adoption explicitly":"ID хранилища не совпадает; явно подтвердите использование нового ID",
+  "Main navigation":"Основная навигация",
+  "Skip to content":"Перейти к содержимому",
+  "Camera":"Камера",
+  "Details":"Подробности",
+  "View storage":"Открыть хранилище",
+  "Camera connectivity, recording progress and storage at a glance.":"Доступность камер, состояние записи и хранилища.",
+  "Connect cameras and manage recording.":"Подключение камер и управление записью.",
+  "Live cameras. Your layout is saved automatically.":"Камеры в реальном времени. Раскладка сохраняется автоматически.",
+  "Find footage by camera, date and time. All times are UTC.":"Поиск записи по камере, дате и времени. Все времена указаны в UTC.",
+  "Recording destinations and protection against missing mounts.":"Хранилища записи и защита при отключении внешнего ресурса.",
+  "Sign in to your NVR":"Вход в видеорегистратор",
+  "Use the credentials configured on this appliance.":"Используйте учётные данные, настроенные на этом устройстве.",
+  "Signing in…":"Вход…",
+  "Retry":"Повторить",
+  "Dismiss":"Закрыть",
+  "Loading appliance status…":"Загрузка состояния устройства…",
+  "No cameras configured":"Камеры не настроены",
+  "Add camera":"Добавить камеру",
+  "Add your first camera to start live viewing or recording.":"Добавьте первую камеру для просмотра или записи.",
+  "Save the connection, then use Check to verify the camera.":"Сохраните подключение и нажмите «Проверить», чтобы проверить камеру.",
+  "Connection":"Подключение камеры",
+  "Credentials are optional if your camera does not require them.":"Учётные данные необязательны, если камера не требует авторизации.",
+  "Pausing recording keeps the camera available for live viewing.":"Приостановка записи не отключает просмотр камеры.",
+  "Advanced settings":"Дополнительные настройки",
+  "Stream and description":"Поток и описание",
+  "Saving…":"Сохранение…",
+  "Camera saved.":"Камера сохранена.",
+  "Camera enabled.":"Камера включена.",
+  "Camera disabled.":"Камера выключена.",
+  "Camera deleted.":"Камера удалена.",
+  "Working…":"Выполняется…",
+  "Discard unsaved camera changes?":"Отменить несохранённые изменения камеры?",
+  "Delete camera \"{name}\"? Recordings will remain until retention cleanup.":"Удалить камеру «{name}»? Архив сохранится до очистки по сроку хранения.",
+  "Remove {name} from view":"Убрать {name} с экрана",
+  "Connecting to camera…":"Подключение к камере…",
+  "On small screens, cameras stack vertically. Edit the desktop layout on a wider screen.":"На небольших экранах камеры расположены вертикально. Изменяйте раскладку для компьютера на более широком экране.",
+  "No cameras in this view":"На экране нет камер",
+  "Choose a camera above to start watching.":"Выберите камеру выше, чтобы начать просмотр.",
+  "Enable or add a camera on the Cameras page to start watching.":"Включите или добавьте камеру на странице «Камеры», чтобы начать просмотр.",
+  "Local appliance · Stream-copy recording":"Локальное устройство · Запись без перекодирования",
+  "Playback time · UTC":"Время просмотра · UTC",
+  "Finding recording…":"Поиск записи…",
+  "Use arrow keys to choose a time; Enter to play.":"Выберите время стрелками и нажмите Enter для просмотра.",
+  "Choose a time to watch":"Выберите время просмотра",
+  "Select a camera and date, then use the timeline or choose a recording below.":"Выберите камеру и дату, затем нажмите на шкалу или выберите запись ниже.",
+  "Recordings · UTC":"Записи · UTC",
+  "Recordings unavailable":"Записи недоступны",
+  "No recordings for this date":"За эту дату записей нет",
+  "Try another date or camera. Footage appears here after a recording file is completed.":"Выберите другую дату или камеру. Запись появится после завершения файла.",
+  "Checking recording destinations…":"Проверка хранилищ записи…",
+  "Protected":"Защищено",
+  "Not protected":"Без защиты",
+  "Updating protection…":"Обновление защиты…",
+  "Connect the expected storage. Only adopt a different ID if you intentionally replaced the storage.":"Подключите ожидаемое хранилище. Используйте другой ID только при намеренной замене хранилища.",
+  "Check the storage connection and mount, then retry.":"Проверьте подключение и монтирование хранилища, затем повторите.",
+  "Check write permissions on this destination.":"Проверьте права записи в это хранилище.",
+  "Free space or adjust retention. Recording resumes when the reserve is available.":"Освободите место или измените срок хранения. Запись возобновится при наличии резерва.",
+  "Storage is not responding. Check the mount or network connection.":"Хранилище не отвечает. Проверьте монтирование или сетевое подключение.",
+  "Used capacity for {name}":"Занятое место в {name}",
+  "Separate mount detected":"Отдельная точка монтирования обнаружена",
+  "No separate mount detected":"Отдельная точка монтирования не обнаружена",
+  "Recording failure notifications use the webhook configured on the server. No destination URL or token is exposed here.":"Уведомления об ошибках записи используют webhook, настроенный на сервере. URL и токен здесь не раскрываются.",
+  'Mount check pending':'Проверка точки монтирования ожидается',
+  'Use a destination from Storage, or enter the name of a directory on your recording volume.':'Выберите хранилище со страницы «Хранилище» или введите имя каталога на томе записи.',
+  'Layout was not saved.':'Раскладка не сохранена.',
+  'Live viewing depends on browser support for this codec. Recording may still work.':'Просмотр зависит от поддержки кодека браузером. Запись при этом может работать.',
+  'Overview':'Обзор','Cameras':'Камеры','Multiview':'Мультиэкран','Archive':'Архив','Storage':'Хранилище',
+  'SELF HOSTED / LAN':'СВОЙ СЕРВЕР / LAN','Language':'Язык','A quiet video recorder':'Тихий видеорегистратор','Recording: stream copy':'Запись: stream copy',
+  'camera':'камера','cameras':'камер','cameras (few)':'камеры','Username':'Логин','Password':'Пароль','Sign in':'Войти',
+  'Online':'В сети','Writing':'Пишут','Free space':'Свободно','Status':'Состояние','Errors':'Ошибки',
+  'Progress: {time}':'Прогресс: {time}','No progress':'Нет прогресса','File: {time}':'Файл: {time}',
+  'Watch':'Смотреть','Add your first RTSP camera on the Cameras tab.':'Добавьте первую RTSP камеру на вкладке «Камеры».',
+  'Camera {id}':'Камера {id}','Edit camera':'Изменить камеру','New camera':'Новая камера','Name':'Название',
+  'Saved; leave blank to keep unchanged':'Сохранён; пусто = без изменений','Optional':'Необязательно',
+  'Remove substream':'Удалить substream','Directory on mount':'Каталог на mount',
+  'Retention days (blank = unlimited)':'Хранить дней (пусто = без лимита)','Description':'Описание',
+  'Enabled':'Включена','Recording':'Запись','Recording schedule':'Расписание записи',
+  'Limit recording hours':'Ограничить время записи','IANA timezone':'Часовой пояс IANA',
+  'Mon':'Пн','Tue':'Вт','Wed':'Ср','Thu':'Чт','Fri':'Пт','Sat':'Сб','Sun':'Вс',
+  'Start':'Начало','End (24:00 = end of day)':'Конец (24:00 — конец суток)','Remove window':'Удалить окно',
+  'Add window':'Добавить окно','Days refer to the start of each window. An end before the start continues into the next day. Without a schedule, recording is continuous.':'Дни относятся к началу окна. Конец раньше начала — запись до следующего дня. Без расписания запись постоянная.',
+  'Save':'Сохранить','Add':'Добавить','Cancel':'Отмена','Configured cameras':'Добавленные камеры',
+  'Edit':'Править','Disable':'Выключить','Enable':'Включить','Checking…':'Проверка…','Check':'Проверить','Delete':'Удалить',
+  'Delete this camera? Recordings will remain until retention cleanup.':'Удалить камеру? Архив сохранится до очистки.',
+  'Columns':'Колонки','Camera…':'Камера…','Drag tile headers and resize using the corner.':'Перетаскивайте заголовки и тяните за угол.',
+  'Main stream ↗':'Основной поток ↗','Close ×':'Закрыть ×',
+  'Stream unavailable. Reconnecting…':'Поток недоступен. Повторное подключение…','Fit':'Вписать','Fill':'Заполнить',
+  'Recording gap: {seconds} s. Next file starts {time}':'Пробел в записи: {seconds} с. Следующий файл начинается {time}',
+  'Select one camera to search by time.':'Выберите одну камеру для поиска по времени.',
+  'No recording at the selected time. Gaps are marked on the timeline.':'В выбранное время запись отсутствует. Пробелы отмечены на шкале.',
+  'End of this camera’s archive.':'Архив этой камеры закончился.','No earlier recording.':'Более ранней записи нет.',
+  'Adjacent recording unavailable.':'Соседняя запись недоступна.','Archive camera':'Камера архива',
+  'All cameras':'Все камеры','Archive date UTC':'Дата архива UTC','Archive time UTC':'Время архива UTC',
+  'Go to time · UTC':'Перейти · UTC','Refresh':'Обновить','Daily recordings · UTC':'Запись за сутки · UTC',
+  'Recording timeline':'Шкала записи','Green = recording; dark = gap. Click the timeline to seek.':'Зелёный — запись; тёмный — пробел. Нажмите на шкалу для перехода.',
+  'Segments · UTC':'Сегменты · UTC','Loading…':'Загрузка…','No completed segments for this date.':'За выбранную дату завершённых сегментов нет.',
+  'Load more':'Загрузить ещё','Playback':'Просмотр','Automatically play the next recording from this camera':'Продолжать запись этой камеры автоматически',
+  'File unavailable or codec unsupported by the browser. Automatic playback stopped.':'Файл недоступен или кодек не поддерживается браузером. Автопереход остановлен.',
+  'Download MP4':'Скачать MP4','← Previous':'← Предыдущий','Next →':'Следующий →','Select a segment or time.':'Выберите сегмент или время.',
+  'Recording destinations':'Каталоги записи','For an external mount, set an expected ID. Create the file ':'Для внешнего mount задайте ожидаемый ID. Файл ',
+  ' with that ID on the storage itself. The application never creates it. A blank ID disables protection.':' с этим ID нужно создать на самом хранилище. Приложение его не создаёт. Пустой ID отключает защиту.',
+  'Ready to record':'Готово к записи','Available':'Доступно','Writable':'Запись разрешена','yes':'да','no':'нет',
+  'Storage ID {name}':'ID хранилища {name}','Expected ID (optional)':'Ожидаемый ID (необязательно)','Save protection':'Сохранить защиту',
+  'Webhook notifications':'Webhook уведомления','Notifications enabled':'Включены',
+  'Disabled; configure WEBHOOK_URL on the server':'Отключены; настройте WEBHOOK_URL на сервере',
+  'Pending':'В очереди','Failed':'Не доставлено','Last delivery':'Последняя доставка',
+  'Authentication required':'Требуется авторизация','Invalid credentials':'Неверный логин или пароль',
+  'Request failed':'Ошибка запроса','Network request failed':'Ошибка сети',
+  'Video stream readable':'Видеопоток доступен',
+  'Cannot read video; check source credentials, connectivity and codec':'Не удалось прочитать видео; проверьте учётные данные, соединение и кодек',
+  'Recorder error; inspect connectivity and codec':'Ошибка записи; проверьте соединение и кодек',
+  'Recorder supervisor failed; retrying on next sync':'Ошибка процесса записи; повторная попытка при следующей синхронизации',
+  'Storage unavailable, not writable, or below reserve':'Хранилище недоступно, не разрешает запись или не имеет резерва места',
+  'Storage free space below reserve':'Свободное место ниже резерва',
+  'Camera not found':'Камера не найдена','Media gateway unavailable':'Медиашлюз недоступен','RTSP URL required':'Требуется RTSP URL',
+  'Invalid destination name':'Неверное имя хранилища','Invalid date':'Неверная дата','A timezone offset or Z is required':'Укажите смещение часового пояса или Z',
+  'Choose a range between zero and 31 days':'Выберите диапазон больше нуля и не более 31 дня',
+  'Too many segments; choose a shorter time range':'Слишком много сегментов; выберите более короткий диапазон',
+  'No recording at this time':'В указанное время записи нет','Expected next or previous':'Допустимы next или previous',
+  'Segment not found':'Сегмент не найден','Recording storage unavailable':'Хранилище записей недоступно',
+  'Camera changed; retry check':'Камера изменена; повторите проверку',
+  'Connectivity':'Подключение','Checking camera':'Проверка камеры','No active recording':'Нет активной записи','Recording enabled':'Запись включена','Recording disabled':'Запись выключена','Offline':'Не в сети','Recording paused':'Запись приостановлена','Disabled camera':'Камера выключена',
+  'Paused by schedule':'Пауза по расписанию','Storage unavailable':'Хранилище недоступно','Reconnecting':'Повторное подключение',
+  'Starting recorder':'Запуск записи','Recording stalled':'Запись не продвигается','Error':'Ошибка',
+  'Checking storage':'Проверка хранилища','Storage check timed out':'Истёк таймаут проверки хранилища',
+  'Storage check failed':'Ошибка проверки хранилища','Storage ID missing or incorrect':'ID хранилища отсутствует или не совпадает',
+  'Unsafe storage path':'Небезопасный путь хранилища','Storage not writable':'Запись в хранилище недоступна',
+  'Storage identity changed':'Идентичность хранилища изменилась','Free space below reserve':'Свободное место ниже резерва',
+  'Expected RTSP URL':'Ожидается RTSP URL','Unknown IANA timezone':'Неизвестный часовой пояс IANA',
+  'Days must be unique integers: Monday=0 through Sunday=6':'Дни должны быть уникальными числами: понедельник=0, воскресенье=6',
+  'Expected HH:MM; 24:00 is allowed only as an end':'Ожидается ЧЧ:ММ; 24:00 допустимо только для конца окна',
+  'An all-day window is 00:00–24:00':'Окно на полные сутки: 00:00–24:00',
+};
+const statuses:Record<string,string> = {
+  UNKNOWN:'Checking camera',RECORDING:'Recording',WRITING:'Writing',ONLINE:'Online',OFFLINE:'Offline',PAUSED:'Recording paused',DISABLED:'Disabled camera',
+  SCHEDULED_PAUSE:'Paused by schedule',STORAGE_UNAVAILABLE:'Storage unavailable',RECONNECTING:'Reconnecting',STARTING:'Starting recorder',STALLED:'Recording stalled',ERROR:'Error',
+  ok:'Ready to record',unavailable:'Storage unavailable',check_pending:'Checking storage',check_timeout:'Storage check timed out',check_failed:'Storage check failed',
+  identity_missing:'Storage ID missing or incorrect',unsafe_path:'Unsafe storage path',not_writable:'Storage not writable',identity_changed:'Storage identity changed',low_space:'Free space below reserve',
+};
+export function t(key:string,values:Record<string,string|number>={}) {
+  const message=language==='ru'?(ru[key]??key):key;
+  return message.replace(/\{(\w+)\}/g,(match,name)=>String(values[name]??match));
+}
+export function cameraCount(count:number){
+  const plural=new Intl.PluralRules(language).select(count);
+  const word=plural==='one'?'camera':language==='ru'&&plural==='few'?'cameras (few)':'cameras';
+  return `${count} ${t(word)}`;
+}
+export const statusText=(code:string)=>t(statuses[code]??code);
+export function connectivityClass(state:string){return state==='ONLINE'?'good':state==='OFFLINE'?'bad':'neutral'}
+export function recordingClass(state:string){return state==='WRITING'?'good':['STALLED','STORAGE_UNAVAILABLE','ERROR'].includes(state)?'bad':['STARTING','RECONNECTING'].includes(state)?'warning':'neutral'}
+export const when=(value:string)=>new Date(value).toLocaleString(language==='ru'?'ru-RU':'en-US',{dateStyle:'short',timeStyle:'medium',timeZone:applicationTimezone(),hourCycle:'h23'});
+export function setLanguage(value:Language,persist=true) {
+  language=value;
+  document.documentElement.lang=value;
+  if(persist){try{localStorage.setItem(preferenceKey,value)}catch{/* Storage may be disabled. */}}
+  listeners.forEach(listener=>listener());
+}
+export function useLanguage(){
+  useTimezone();
+  useSyncExternalStore(listener=>{listeners.add(listener);return()=>{listeners.delete(listener)}},()=>language);
+  return {language,setLanguage,t,when,statusText,cameraCount,connectivityClass,recordingClass};
+}
+export async function initializeLanguage(){
+  let saved:unknown;
+  try{saved=localStorage.getItem(preferenceKey)}catch{/* Use the server default. */}
+  if(validLanguage(saved)){setLanguage(saved,false);return}
+  let configured:unknown;
+  try{
+    const response=await fetch('/api/language',{signal:AbortSignal.timeout(5000)});
+    if(response.ok)configured=(await response.json()).default_language;
+  }catch{/* English remains available when the configuration cannot be fetched. */}
+  setLanguage(validLanguage(configured)?configured:'en',false);
+}

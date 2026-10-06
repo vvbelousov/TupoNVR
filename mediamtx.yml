@@ -1,0 +1,21 @@
+logLevel: warn
+api: yes
+apiAddress: :9997
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: no
+hls: no
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+srt: no
+moq: no
+paths: {}
+authMethod: internal
+authInternalUsers:
+  - user: any
+    ips: []
+    permissions:
+      - action: read
+      - action: api

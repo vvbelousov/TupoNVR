@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest a focused improvement for a lightweight NVR.
+body:
+  - type: textarea
+    attributes:
+      label: Workflow or problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed behavior
+      description: Include alternatives and why this fits a small self-hosted installation.
+    validations:
+      required: true

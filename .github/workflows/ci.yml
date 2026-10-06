@@ -1,0 +1,82 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          clean: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install -r backend/requirements-dev.txt
+          npm ci --prefix frontend
+          python -m playwright install --with-deps chromium
+      - name: Fetch pinned MediaMTX test binary
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/mediamtx.tar.gz" https://github.com/bluenviron/mediamtx/releases/download/v1.21.1/mediamtx_v1.21.1_linux_amd64.tar.gz
+          echo "653abc672a3e693f8d3b2717752492fdcfb8072291ec108d03d3dd857411b0ee  $RUNNER_TEMP/mediamtx.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/mediamtx"
+          tar -xzf "$RUNNER_TEMP/mediamtx.tar.gz" -C "$RUNNER_TEMP/mediamtx" mediamtx
+      - name: Validate unit, integration, browser and build checks
+        env:
+          NVR_PYTHON: python
+          NVR_MEDIAMTX_BIN: ${{ runner.temp }}/mediamtx/mediamtx
+          NVR_RUN_BROWSER: '1'
+        run: scripts/validate.sh
+      - name: Check workflow structure and release tooling
+        run: python -m pytest -q tests/test_release.py
+  docker:
+    name: Docker (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: docker/setup-buildx-action@v4
+      - name: Build production image without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: tuponvr:ci
+          cache-from: type=gha,scope=ci-${{ matrix.arch }}
+          cache-to: type=gha,scope=ci-${{ matrix.arch }},mode=max
+      - name: Clean Compose recording and persistence smoke test
+        run: python scripts/smoke.py --image tuponvr:ci

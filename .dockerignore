@@ -1,0 +1,21 @@
+# Allow only files used by the production Dockerfile into the build context.
+**
+!LICENSE
+!backend/
+!backend/*.py
+!backend/requirements.txt
+!backend/Dockerfile
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/tsconfig.json
+!frontend/src/
+!frontend/src/**
+!frontend/scripts/
+!frontend/scripts/**
+!frontend/public/
+!frontend/public/**
+# Never send environment files, even if later added under an allowed directory.
+**/.env
+**/.env.*
