@@ -22,8 +22,8 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Require a release commit on main
-        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Require a release commit on master
+        run: git merge-base --is-ancestor HEAD origin/master
       - name: Validate version, license and publication settings
         id: release
         env:

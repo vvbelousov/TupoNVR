@@ -12,6 +12,14 @@ updates:
     open-pull-requests-limit: 3
   - package-ecosystem: npm
     directory: /frontend
+    # React/React DOM must match; their types also have coupled peer dependencies.
+    groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - '@types/react'
+          - '@types/react-dom'
     schedule:
       interval: monthly
     open-pull-requests-limit: 3

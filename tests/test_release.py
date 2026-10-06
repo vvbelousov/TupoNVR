@@ -50,7 +50,9 @@ def test_release_rejects_unsafe_or_inconsistent_metadata(changes):
 def test_workflows_separate_ci_and_protected_publication():
     ci = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
     publish = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
-    assert ci['on']['push']['branches'] == ['main'] and 'pull_request' in ci['on']
+    assert ci['on']['push']['branches'] == ['master'] and 'pull_request' in ci['on']
+    verify_steps = publish['jobs']['verify']['steps']
+    assert any(step.get('run') == 'git merge-base --is-ancestor HEAD origin/master' for step in verify_steps)
     assert ci['permissions'] == publish['permissions'] == {'contents': 'read'}
     assert set(publish['on']) == {'release'}
     assert publish['on']['release']['types'] == ['published']
@@ -84,3 +86,14 @@ def test_application_version_matches_manifest():
 def test_community_yaml_parses():
     for path in (ROOT / '.github').rglob('*.yml'):
         assert isinstance(yaml.load(path.read_text(), Loader=yaml.BaseLoader), dict), path
+
+
+def test_dependabot_updates_react_runtime_and_types_together():
+    config = yaml.load((ROOT / '.github/dependabot.yml').read_text(), Loader=yaml.BaseLoader)
+    npm = next(update for update in config['updates'] if update['package-ecosystem'] == 'npm')
+    # Separate runtime or type PRs can build successfully but leave the UI broken,
+    # or fail npm ci because React DOM types require newer React types.
+    expected = {'react', 'react-dom', '@types/react', '@types/react-dom'}
+    group = npm['groups']['react']
+    assert set(group['patterns']) == expected
+    assert 'dependency-type' not in group and 'update-types' not in group
