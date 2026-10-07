@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import {VideoContainer} from './VideoContainer';
 import {useLanguage} from './i18n';
 
 let webrtcPort='8889';
@@ -20,6 +21,6 @@ export function Stream({id,sub=false}:{id:number;sub?:boolean}) {
     });
     return ()=>{active=false;reader.close();if(video.current)video.current.srcObject=null};
   },[id,sub]);
-  return <div className="stream"><video onError={()=>{setConnecting(false);setIssue('Live playback failed. Check browser codec support.')}} ref={video} autoPlay muted playsInline style={{objectFit:fit}}/><button className="fit" onClick={()=>setFit(fit==='contain'?'cover':'contain')}>{tr(fit==='contain'?'Fit':'Fill')}</button>{(issue||connecting)&&<span role="status" className="stream-error">{tr(issue||'Connecting to camera…')}</span>}</div>;
+  return <VideoContainer className="stream"><video onError={()=>{setConnecting(false);setIssue('Live playback failed. Check browser codec support.')}} ref={video} autoPlay muted playsInline style={{objectFit:fit}}/><button className="fit" onClick={()=>setFit(fit==='contain'?'cover':'contain')}>{tr(fit==='contain'?'Fit':'Fill')}</button>{(issue||connecting)&&<span role="status" className="stream-error">{tr(issue||'Connecting to camera…')}</span>}</VideoContainer>;
 }
 

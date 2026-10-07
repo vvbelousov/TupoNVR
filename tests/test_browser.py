@@ -10,6 +10,25 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 
+async def fullscreen_roundtrip(page, container, language):
+    """Native fullscreen must preserve the video instance and playback state."""
+    from playwright.async_api import expect
+    enter='Enter fullscreen' if language=='en' else 'На весь экран'
+    leave='Exit fullscreen' if language=='en' else 'Выйти из полноэкранного режима'
+    before=await container.locator('video').evaluate('(video)=>{window.fullscreenVideo=video;return {time:video.currentTime,paused:video.paused}}')
+    await container.get_by_role('button',name=enter,exact=True).click()
+    await expect(container.get_by_role('button',name=leave,exact=True)).to_have_attribute('aria-pressed','true')
+    assert await container.evaluate('(element)=>document.fullscreenElement===element&&element.querySelectorAll("video").length===1')
+    assert await container.locator('video').evaluate('(video)=>video===window.fullscreenVideo&&getComputedStyle(video).objectFit==="contain"')
+    dimensions=await container.evaluate('(element)=>({width:element.clientWidth,height:element.clientHeight,viewportWidth:innerWidth,viewportHeight:innerHeight})')
+    assert abs(dimensions['width']-dimensions['viewportWidth'])<=1 and abs(dimensions['height']-dimensions['viewportHeight'])<=1,dimensions
+    await container.get_by_role('button',name=leave,exact=True).click()
+    await expect(container.get_by_role('button',name=enter,exact=True)).to_have_attribute('aria-pressed','false')
+    after=await container.locator('video').evaluate('(video)=>({same:video===window.fullscreenVideo,time:video.currentTime,paused:video.paused})')
+    assert after['same'] and after['paused']==before['paused'],(before,after)
+    assert abs(after['time']-before['time'])<2,(before,after)
+
+
 def archive_day(day, zone='UTC'):
     from zoneinfo import ZoneInfo
     local = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo(zone))
@@ -298,6 +317,7 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 timeline = page.get_by_role('slider',name=ui('Шкала записи'))
                 await timeline.focus()
                 await page.get_by_role('button',name='Pause' if language=='en' else 'Пауза',exact=True).click()
+                await fullscreen_roundtrip(page,page.locator('.recorded-video'),language)
                 assert int(await timeline.get_attribute('aria-valuenow'))>=86350
                 await timeline.press('Home')
                 await timeline.press('ArrowRight')
@@ -321,7 +341,14 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 await expect(page.get_by_role('status').filter(has_text=ui('В выбранное время запись отсутствует.'))).to_contain_text(ui('В выбранное время запись отсутствует.'))
                 await page.get_by_role('button', name=ui('Мультиэкран'), exact=True).click()
                 assert await page.locator('.modal').count() == 0
-                await page.locator('.toolbar select').nth(1).select_option('2')
+                async with page.expect_response(lambda response:urlsplit(response.url).path=='/api/layout' and response.request.method=='PUT'):
+                    await page.locator('.toolbar select').nth(1).select_option('2')
+                await expect(page.locator('.tile')).to_have_count(2)
+                saves_before=len(layout_saves)
+                await fullscreen_roundtrip(page,page.locator('.tile').filter(has_text='Camera 1').locator('.stream'),language)
+                await fullscreen_roundtrip(page,page.locator('.tile').filter(has_text='Camera 2').locator('.stream'),language)
+                assert len(layout_saves)==saves_before
+                await expect(page.locator('.tile')).to_have_count(2)
                 await page.locator('.tile').filter(has_text='Camera 1').get_by_role('button', name='Remove Camera 1 from view' if language=='en' else 'Убрать Camera 1 с экрана', exact=True).click()
                 await page.wait_for_timeout(500)
                 assert [tile['camera_id'] for tile in layout_saves[-1]['tiles']] == [2]
@@ -332,6 +359,7 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 await capture('multiview-desktop')
                 await page.locator('.tile').get_by_role('button',name='Main stream ↗' if language=='en' else 'Основной поток ↗',exact=True).click()
                 await expect(page.get_by_role('dialog',name='Camera 2',exact=True)).to_be_visible()
+                await fullscreen_roundtrip(page,page.locator('dialog .stream'),language)
                 await capture('live-dialog')
                 await page.keyboard.press('Escape')
                 await expect(page.get_by_role('dialog')).to_have_count(0)
@@ -590,6 +618,11 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     assert 1.5<=offsets[0]<3.5,offsets
                     await expect(page.get_by_test_id('master-time')).to_contain_text('14:32:02')
                     assert await page.locator('.archive-camera video').evaluate_all('(videos)=>videos.every(v=>v.paused)')
+                    before_fullscreen=len(resolutions)
+                    await fullscreen_roundtrip(page,tile(cameras[0]).locator('.recorded-video'),language)
+                    assert len(resolutions)==before_fullscreen
+                    await expect(page.locator('.archive-camera')).to_have_count(4)
+                    assert await tile(cameras[1]).locator('video').evaluate('v=>v.paused')
                     player=tile(cameras[0]).locator('video')
                     await player.evaluate('v=>v.currentTime=0')
                     await page.wait_for_function('document.querySelector(".archive-camera video").currentTime>1.5')
@@ -600,6 +633,7 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     await expect(tile(cameras[0])).to_have_class('archive-camera focused')
                     await tile(cameras[0]).get_by_role('button',name=ui('Return to grid','Вернуться к сетке'),exact=True).click()
                     await page.get_by_role('button',name=ui('Play','Воспроизвести'),exact=True).click()
+                    await fullscreen_roundtrip(page,tile(cameras[1]).locator('.recorded-video'),language)
                     await expect(tile(cameras[2])).to_contain_text(ui('Recording lookup failed','Не удалось найти запись'),timeout=10000)
                     assert await tile(cameras[1]).locator('video').evaluate('v=>!v.paused')
                     await expect(tile(cameras[2]).locator('video')).to_have_attribute('src',f'/api/recordings/{resumes}',timeout=15000)
@@ -750,6 +784,28 @@ window.MediaMTXWebRTCReader=class{constructor(config){window.liveReaders.push(co
                 await page.locator('.overview-row').filter(has_text='Camera 1').get_by_role('button',name=watch,exact=True).click()
                 await expect(page).to_have_url('http://nvr.test/cameras/1/live')
                 await single(1)
+                readers=await page.evaluate('({opened:liveReaders.length,closed:closedReaders.length})')
+                await fullscreen_roundtrip(page,page.locator('.single-camera-video .stream'),language)
+                assert await page.evaluate('({opened:liveReaders.length,closed:closedReaders.length})')==readers
+                enter='Enter fullscreen' if language=='en' else 'На весь экран'
+                leave='Exit fullscreen' if language=='en' else 'Выйти из полноэкранного режима'
+                stream=page.locator('.single-camera-video .stream')
+                await stream.evaluate('element=>{element.requestFullscreen=()=>Promise.reject(new Error("denied"))}')
+                await stream.get_by_role('button',name=enter,exact=True).click()
+                await expect(stream.locator('.fullscreen-error')).to_contain_text('Fullscreen unavailable' if language=='en' else 'Полноэкранный режим недоступен')
+                await expect(stream.get_by_role('button',name=enter,exact=True)).to_be_enabled()
+                assert await page.evaluate('({opened:liveReaders.length,closed:closedReaders.length})')==readers
+                await stream.evaluate('element=>{delete element.requestFullscreen}')
+                await stream.get_by_role('button',name=enter,exact=True).click()
+                await expect(stream.get_by_role('button',name=leave,exact=True)).to_have_attribute('aria-pressed','true')
+                await page.evaluate('document.exitFullscreen()')
+                await expect(stream.get_by_role('button',name=enter,exact=True)).to_have_attribute('aria-pressed','false')
+                await expect(stream.locator('.fullscreen-error')).to_have_count(0)
+                await stream.evaluate('element=>{element.requestFullscreen=undefined;document.dispatchEvent(new Event("fullscreenchange"))}')
+                await expect(stream.locator('.fullscreen-control')).to_have_count(0)
+                await expect(stream.locator('video')).to_have_count(1)
+                await stream.evaluate('element=>{delete element.requestFullscreen;document.dispatchEvent(new Event("fullscreenchange"))}')
+                await expect(stream.get_by_role('button',name=enter,exact=True)).to_be_visible()
                 await expect(page.locator('.stream-error')).to_be_visible()
                 await page.evaluate('window.liveConfigs.at(-1).onTrack({streams:[new MediaStream()]})')
                 await expect(page.locator('.stream-error')).to_have_count(0)
@@ -767,6 +823,11 @@ window.MediaMTXWebRTCReader=class{constructor(config){window.liveReaders.push(co
                 await expect(page.locator('.tile')).to_have_count(1)
                 await expect(page.locator('.tile strong')).to_have_text('Camera 2')
                 assert (await page.evaluate('window.liveReaders.at(-1)')).endswith('/cam_2_sub/whep')
+                readers=await page.evaluate('({opened:liveReaders.length,closed:closedReaders.length})')
+                await page.locator('.tile .fit').click()
+                await fullscreen_roundtrip(page,page.locator('.tile .stream'),language)
+                assert await page.locator('.tile video').evaluate('video=>getComputedStyle(video).objectFit')=='cover'
+                assert await page.evaluate('({opened:liveReaders.length,closed:closedReaders.length})')==readers
                 await page.get_by_role('button',name=overview,exact=True).click()
                 await page.go_back()
                 await expect(page.locator('.tile strong')).to_have_text('Camera 2')

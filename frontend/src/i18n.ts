@@ -9,6 +9,9 @@ const listeners = new Set<()=>void>();
 
 // English is the source language; one small catalog keeps the UI dependency-free.
 const ru:Record<string,string> = {
+  'Enter fullscreen':'На весь экран',
+  'Exit fullscreen':'Выйти из полноэкранного режима',
+  'Fullscreen unavailable. Try again or use browser controls.':'Полноэкранный режим недоступен. Повторите попытку или используйте управление браузера.',
   'Live camera':'Прямой эфир камеры',
   'Single-camera live view.':'Прямой эфир одной камеры.',
   'Back to Overview':'Назад к обзору',
