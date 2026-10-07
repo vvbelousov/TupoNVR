@@ -147,7 +147,7 @@ To recover, keep the application stopped, restore the complete matching backup w
 
 ## Interface and API
 
-- **Overview:** camera counts, connectivity, recording progress, free space, errors, and installation timezone settings.
+- **Overview:** camera counts, connectivity, recording progress, free space, errors, and installation timezone settings. Watch opens `/cameras/<id>/live` for that camera’s main stream. Refresh and browser navigation preserve the camera; saved Multiview selections stay independent.
 - **Cameras:** add, edit, disable, check, and delete cameras. Blank passwords or RTSP URLs preserve saved values during editing; a separate switch removes the substream. List URLs hide paths and query parameters that may contain secrets.
 - **Multiview:** add live cameras, drag tile headers, resize using the corner, and choose `contain`/`cover`. Individual viewing uses the main stream.
 - **Archive:** investigate one, several, or all cameras at a shared local date/time. Aligned availability tracks expose gaps; shared controls provide play/pause, seek, speed, and focus. Segment transitions happen independently. Single-camera previous/next, automatic-next, pagination, and downloads remain available.

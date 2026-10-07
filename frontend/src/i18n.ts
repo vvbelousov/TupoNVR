@@ -9,6 +9,17 @@ const listeners = new Set<()=>void>();
 
 // English is the source language; one small catalog keeps the UI dependency-free.
 const ru:Record<string,string> = {
+  'Live camera':'Прямой эфир камеры',
+  'Single-camera live view.':'Прямой эфир одной камеры.',
+  'Back to Overview':'Назад к обзору',
+  'Loading camera…':'Загрузка камеры…',
+  'Camera could not be loaded':'Не удалось загрузить камеру',
+  'Retry loading appliance status above.':'Повторите загрузку состояния устройства выше.',
+  'This camera does not exist or has been deleted.':'Эта камера не существует или была удалена.',
+  'Camera is disabled. Enable it on the Cameras page to watch live.':'Камера отключена. Включите её на странице «Камеры» для просмотра.',
+  'Camera is offline. Live playback will reconnect when available.':'Камера не в сети. Просмотр возобновится, когда она станет доступна.',
+  'Live stream for {name}':'Прямой эфир камеры {name}',
+  'Live playback failed. Check browser codec support.':'Ошибка просмотра. Проверьте поддержку кодека браузером.',
   'Choose an archive date':'Выберите дату архива',
   "Appliance time":"Время устройства",
   "Timezone":"Часовой пояс",

@@ -684,3 +684,124 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
         asyncio.run(exercise())
         with main.db() as connection:
             assert [tuple(row) for row in connection.execute('SELECT * FROM segments ORDER BY id')]==original
+
+
+@pytest.mark.browser
+@pytest.mark.skipif(os.getenv('NVR_RUN_BROWSER') != '1', reason='Build frontend and set NVR_RUN_BROWSER=1')
+@pytest.mark.parametrize('language,width',[('en',1280),('ru',390)])
+def test_single_camera_live_navigation_and_multiview_independence(language, width):
+    from playwright.async_api import async_playwright, expect
+    root=Path(__file__).resolve().parents[1]/'frontend'/'dist'
+    async def exercise():
+        cameras=[{'id':i,'name':f'Camera {i}','enabled':True,'substream_url':'rtsp://synthetic/sub'} for i in [1,2]]
+        layout={'columns':2,'tiles':[{'camera_id':2,'x':0,'y':0,'w':1,'h':1}]}
+        writes=[]
+        status='ONLINE'
+        camera_gate=None
+        camera_failure=False
+        async with async_playwright() as playwright:
+            browser=await playwright.chromium.launch(executable_path=os.getenv('NVR_CHROME_EXECUTABLE') or None,headless=True,args=['--no-sandbox'])
+            try:
+                page=await browser.new_page(viewport={'width':width,'height':844})
+                async def route(handler):
+                    path=urlsplit(handler.request.url).path
+                    if path=='/api/language':
+                        result={'default_language':language}
+                    elif path=='/api/cameras':
+                        if camera_gate is not None:
+                            await camera_gate.wait()
+                        if camera_failure:
+                            await handler.fulfill(status=503,json={'detail':'Request failed'})
+                            return
+                        result=cameras
+                    elif path=='/api/config':
+                        result={'webrtc_port':8889,'timezone':'UTC'}
+                    elif path=='/api/dashboard':
+                        result={'cameras':len(cameras),'storage':{'free_bytes':None},'errors':[]}
+                    elif path=='/api/layout':
+                        if handler.request.method=='PUT':
+                            writes.append(handler.request.post_data_json)
+                        result=layout
+                    elif path.endswith('/status'):
+                        result={'connectivity_state':status}
+                    elif path=='/reader.js':
+                        await handler.fulfill(content_type='text/javascript',body='''window.liveReaders=[];window.closedReaders=[];window.liveConfigs=[];
+window.MediaMTXWebRTCReader=class{constructor(config){window.liveReaders.push(config.url);window.liveConfigs.push(config);config.onError('unavailable')}close(){window.closedReaders.push(true)}};''')
+                        return
+                    else:
+                        asset=root/'index.html' if path=='/' or path.startswith('/cameras/') else root/path.lstrip('/')
+                        await handler.fulfill(body=asset.read_bytes(),content_type=mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
+                        return
+                    await handler.fulfill(json=result)
+                await page.route('http://nvr.test/**',route)
+                overview='Overview' if language=='en' else 'Обзор'
+                multiview='Multiview' if language=='en' else 'Мультиэкран'
+                watch='Watch' if language=='en' else 'Смотреть'
+                back='Back to Overview' if language=='en' else 'Назад к обзору'
+                missing='Camera not found' if language=='en' else 'Камера не найдена'
+                async def single(id):
+                    await expect(page.locator('header h2')).to_have_text(f'Camera {id}')
+                    await expect(page.locator('video')).to_have_count(1)
+                    await expect(page.locator('.tile')).to_have_count(0)
+                    await expect(page.locator('main')).not_to_contain_text(f'Camera {3-id}')
+                    assert (await page.evaluate('window.liveReaders.at(-1)')).endswith(f'/cam_{id}/whep')
+                    assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
+                await page.goto('http://nvr.test/')
+                await page.locator('.overview-row').filter(has_text='Camera 1').get_by_role('button',name=watch,exact=True).click()
+                await expect(page).to_have_url('http://nvr.test/cameras/1/live')
+                await single(1)
+                await expect(page.locator('.stream-error')).to_be_visible()
+                await page.evaluate('window.liveConfigs.at(-1).onTrack({streams:[new MediaStream()]})')
+                await expect(page.locator('.stream-error')).to_have_count(0)
+                assert await page.locator('video').evaluate('(video)=>video.srcObject instanceof MediaStream')
+                await page.reload()
+                await single(1)
+                await page.get_by_role('button',name=back,exact=True).click()
+                await page.locator('.overview-row').filter(has_text='Camera 2').get_by_role('button',name=watch,exact=True).click()
+                await single(2)
+                await page.go_back()
+                await expect(page.locator('.overview-row')).to_have_count(2)
+                await page.go_forward()
+                await single(2)
+                await page.get_by_role('button',name=multiview,exact=True).click()
+                await expect(page.locator('.tile')).to_have_count(1)
+                await expect(page.locator('.tile strong')).to_have_text('Camera 2')
+                assert (await page.evaluate('window.liveReaders.at(-1)')).endswith('/cam_2_sub/whep')
+                await page.get_by_role('button',name=overview,exact=True).click()
+                await page.go_back()
+                await expect(page.locator('.tile strong')).to_have_text('Camera 2')
+                await page.reload()
+                await expect(page.locator('.tile strong')).to_have_text('Camera 2')
+                assert writes==[]
+                for id in ['999','invalid']:
+                    await page.goto(f'http://nvr.test/cameras/{id}/live')
+                    await expect(page.get_by_text(missing,exact=True)).to_be_visible()
+                    await expect(page.locator('video')).to_have_count(0)
+                camera_gate=asyncio.Event()
+                await page.goto('http://nvr.test/cameras/1/live')
+                await expect(page.get_by_text('Loading camera…' if language=='en' else 'Загрузка камеры…',exact=True)).to_be_visible()
+                camera_gate.set()
+                camera_gate=None
+                await single(1)
+                camera_failure=True
+                await page.reload()
+                await expect(page.get_by_text('Camera could not be loaded' if language=='en' else 'Не удалось загрузить камеру',exact=True)).to_be_visible()
+                await expect(page.locator('video')).to_have_count(0)
+                camera_failure=False
+                status='OFFLINE'
+                await page.goto('http://nvr.test/cameras/1/live')
+                await single(1)
+                await expect(page.locator('.single-camera-live .feedback')).to_contain_text('offline' if language=='en' else 'не в сети')
+                await page.locator('video').dispatch_event('error')
+                await expect(page.locator('.stream-error')).to_contain_text('playback failed' if language=='en' else 'Ошибка просмотра')
+                cameras[0]['enabled']=False
+                await page.reload()
+                await expect(page.locator('.single-camera-live .feedback')).to_contain_text('disabled' if language=='en' else 'отключена')
+                cameras.pop(0)
+                await expect(page.get_by_text(missing,exact=True)).to_be_visible(timeout=15000)
+                await expect(page.locator('video')).to_have_count(0)
+                assert await page.evaluate('window.closedReaders.length')>0
+                assert writes==[]
+            finally:
+                await browser.close()
+    asyncio.run(exercise())
