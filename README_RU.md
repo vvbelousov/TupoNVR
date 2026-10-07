@@ -203,7 +203,7 @@ The **Language / Язык** selector is available before login and on every page
 
 Set the installation timezone on **Overview → Appliance time**. `APP_TIMEZONE=UTC` is the initial default; a UI-saved preference overrides it and persists as `/data/settings.json` on the existing data volume. There is no database migration. Existing recording timestamps, filenames, logs and webhook payloads remain UTC. **Existing per-camera schedule timezone fields are retained for compatibility but every schedule now uses the installation timezone:** configure it before relying on schedules after upgrading.
 
-Archive supports one, several or all cameras on one absolute playback clock, with aligned availability tracks, shared play/pause/seek/speed, automatic independent segment transitions, gap recovery, and focus mode. Local archive dates use their true DST-aware day bounds; repeated local times require an offset choice and nonexistent times produce an error. Browser timezone does not decide the query instant. No transcoding or media composition is added.
+Archive supports one, several or all cameras on one absolute playback clock, with aligned availability tracks, shared play/pause/seek/speed, automatic independent segment transitions, gap recovery, and individual-camera fullscreen. Local archive dates use their true DST-aware day bounds; repeated local times require an offset choice and nonexistent times produce an error. Browser timezone does not decide the query instant. No transcoding or media composition is added.
 
 See [time model, configuration, APIs, synchronization strategy and limits](docs/time-and-archive.md).
 

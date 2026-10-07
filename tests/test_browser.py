@@ -317,6 +317,8 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 timeline = page.get_by_role('slider',name=ui('Шкала записи'))
                 await timeline.focus()
                 await page.get_by_role('button',name='Pause' if language=='en' else 'Пауза',exact=True).click()
+                await expect(page.locator('.archive-camera-head button')).to_have_count(0)
+                await expect(page.locator('.archive-camera').get_by_role('button',name='Focus' if language=='en' else 'Увеличить',exact=True)).to_have_count(0)
                 await fullscreen_roundtrip(page,page.locator('.recorded-video'),language)
                 assert int(await timeline.get_attribute('aria-valuenow'))>=86350
                 await timeline.press('Home')
@@ -618,9 +620,24 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     assert 1.5<=offsets[0]<3.5,offsets
                     await expect(page.get_by_test_id('master-time')).to_contain_text('14:32:02')
                     assert await page.locator('.archive-camera video').evaluate_all('(videos)=>videos.every(v=>v.paused)')
+                    await expect(page.locator('.archive-camera-head button')).to_have_count(0)
+                    await expect(page.locator('.archive-camera').get_by_role('button',name=ui('Focus','Увеличить'),exact=True)).to_have_count(0)
+                    await expect(page.locator('.archive-camera').get_by_role('button',name=ui('Return to grid','Вернуться к сетке'),exact=True)).to_have_count(0)
                     before_fullscreen=len(resolutions)
-                    await fullscreen_roundtrip(page,tile(cameras[0]).locator('.recorded-video'),language)
+                    master_time=await page.get_by_test_id('master-time').inner_text()
+                    timeline_position=await page.get_by_role('slider',name=ui('Recording timeline','Шкала записи')).get_attribute('aria-valuenow')
+                    await page.get_by_label(ui('Speed','Скорость'),exact=True).select_option('2')
+                    await page.locator('.archive-camera video').evaluate_all('(videos)=>{window.archiveVideos=videos}')
+                    for camera in cameras[:2]:
+                        await fullscreen_roundtrip(page,tile(camera).locator('.recorded-video'),language)
                     assert len(resolutions)==before_fullscreen
+                    assert await page.get_by_test_id('master-time').inner_text()==master_time
+                    await expect(page.get_by_role('slider',name=ui('Recording timeline','Шкала записи'))).to_have_attribute('aria-valuenow',timeline_position)
+                    await expect(page.get_by_label(ui('Archive camera','Камера архива'),exact=True)).to_have_value('all')
+                    await expect(page.get_by_label(ui('Speed','Скорость'),exact=True)).to_have_value('2')
+                    await expect(page.get_by_role('button',name=ui('Play','Воспроизвести'),exact=True)).to_be_visible()
+                    assert await page.locator('.archive-camera video').evaluate_all('(videos)=>videos.every((v,i)=>v===window.archiveVideos[i]&&v.paused&&v.playbackRate===2)')
+                    await page.get_by_label(ui('Speed','Скорость'),exact=True).select_option('1')
                     await expect(page.locator('.archive-camera')).to_have_count(4)
                     assert await tile(cameras[1]).locator('video').evaluate('v=>v.paused')
                     player=tile(cameras[0]).locator('video')
@@ -629,9 +646,6 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     for rate in ('0.5','2','4','1'):
                         await page.get_by_label(ui('Speed','Скорость'),exact=True).select_option(rate)
                         assert await player.evaluate('v=>v.playbackRate')==float(rate)
-                    await tile(cameras[0]).get_by_role('button',name=ui('Focus','Увеличить'),exact=True).click()
-                    await expect(tile(cameras[0])).to_have_class('archive-camera focused')
-                    await tile(cameras[0]).get_by_role('button',name=ui('Return to grid','Вернуться к сетке'),exact=True).click()
                     await page.get_by_role('button',name=ui('Play','Воспроизвести'),exact=True).click()
                     await fullscreen_roundtrip(page,tile(cameras[1]).locator('.recorded-video'),language)
                     await expect(tile(cameras[2])).to_contain_text(ui('Recording lookup failed','Не удалось найти запись'),timeout=10000)

@@ -54,8 +54,6 @@ const ru:Record<string,string> = {
   "Speed":"Скорость",
   "Choose cameras to watch":"Выберите камеры для просмотра",
   "Select one or more cameras, then choose a date and time.":"Выберите одну или несколько камер, затем дату и время.",
-  "Focus":"Увеличить",
-  "Return to grid":"Вернуться к сетке",
   "Footage resumes at {time}":"Запись возобновляется в {time}",
   "Use the timeline to choose another moment.":"Выберите другой момент на шкале времени.",
   "Recordings":"Записи",
