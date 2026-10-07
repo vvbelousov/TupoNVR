@@ -15,7 +15,6 @@ from urllib.parse import urlsplit, urlunsplit, unquote
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field, field_validator
 from db import db, init
 from video import MediaGateway, ProcessSupervisor, ROOT, MIN_FREE, cleanup
@@ -34,7 +33,6 @@ handler.setFormatter(JsonLog())
 logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'), handlers=[handler])
 log = logging.getLogger('nvr')
 logging.getLogger('httpx').setLevel(logging.WARNING)
-security = HTTPBasic(auto_error=False)
 AUTH_USER = os.getenv('AUTH_USERNAME', '')
 AUTH_PASS = os.getenv('AUTH_PASSWORD', '')
 DEFAULT_LANGUAGE = os.getenv('DEFAULT_LANGUAGE', 'en').lower()
@@ -52,7 +50,7 @@ class LoginInput(BaseModel):
     username: str
     password: str
 
-async def auth(request: Request, credentials: HTTPBasicCredentials | None = Depends(security)):
+async def auth(request: Request):
     if not AUTH_USER and not AUTH_PASS:
         return
     cookie = request.cookies.get('nvr_session', '')
@@ -61,9 +59,8 @@ async def auth(request: Request, credentials: HTTPBasicCredentials | None = Depe
         cookie_ok = int(stamp) > time.time() and secrets.compare_digest(cookie, token(int(stamp)))
     except (ValueError, IndexError, TypeError):
         cookie_ok = False
-    basic_ok = credentials is not None and secrets.compare_digest(credentials.username.encode(), AUTH_USER.encode()) and secrets.compare_digest(credentials.password.encode(), AUTH_PASS.encode())
-    if not cookie_ok and not basic_ok:
-        raise HTTPException(401, 'Authentication required', headers={'WWW-Authenticate': 'Basic realm="NVR"'})
+    if not cookie_ok:
+        raise HTTPException(401, 'Authentication required')
 
 class CameraInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -314,6 +311,12 @@ def login(body: LoginInput, response: Response):
     response.set_cookie('nvr_session', token(int(time.time()) + 86400), httponly=True, samesite='strict', secure=os.getenv('COOKIE_SECURE','false').lower() == 'true', max_age=86400)
     return {'ok': True}
 
+@app.post('/api/logout', status_code=204)
+def logout(response: Response):
+    response.delete_cookie('nvr_session', httponly=True, samesite='strict',
+                           secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true')
+
+
 @app.get('/health')
 def health():
     return {'ok': True}
@@ -333,7 +336,7 @@ def cameras():
 @app.get('/api/config', dependencies=[Depends(auth)])
 def browser_config():
     return {'webrtc_port': int(os.getenv('WEBRTC_PORT', '8889')), 'timezone': get_timezone(),
-            'now': datetime.now(timezone.utc).isoformat()}
+            'now': datetime.now(timezone.utc).isoformat(), 'username': AUTH_USER or None}
 
 
 class TimezoneInput(BaseModel):
@@ -859,6 +862,19 @@ def mount_ui(application: FastAPI, directory: Path):
     from fastapi.staticfiles import StaticFiles
     @application.get('/cameras/{camera_id}/live', include_in_schema=False)
     def single_camera_ui(camera_id: str):
+        return FileResponse(directory / 'index.html')
+
+    @application.get('/overview/', include_in_schema=False)
+    @application.get('/multiview/', include_in_schema=False)
+    @application.get('/archive/', include_in_schema=False)
+    @application.get('/settings/', include_in_schema=False)
+    @application.get('/overview', include_in_schema=False)
+    @application.get('/multiview', include_in_schema=False)
+    @application.get('/archive', include_in_schema=False)
+    @application.get('/settings', include_in_schema=False)
+    @application.get('/account', include_in_schema=False)
+    @application.get('/account/', include_in_schema=False)
+    def application_ui():
         return FileResponse(directory / 'index.html')
 
     application.mount('/', StaticFiles(directory=directory, html=True), name='ui')

@@ -9,6 +9,15 @@ const listeners = new Set<()=>void>();
 
 // English is the source language; one small catalog keeps the UI dependency-free.
 const ru:Record<string,string> = {
+  'Account':'Аккаунт',
+  'Preferences':'Предпочтения',
+  'Your preferences and account actions.':'Ваши предпочтения и действия с аккаунтом.',
+  'Language is saved in this browser.':'Язык сохраняется в этом браузере.',
+  'Authentication is not configured on this appliance.':'Аутентификация на этом устройстве не настроена.',
+  'Log out':'Выйти',
+  'Signing out…':'Выход…',
+  'Unable to sign in. Please try again.':'Не удалось войти. Попробуйте ещё раз.',
+
   'Enter fullscreen':'На весь экран',
   'Exit fullscreen':'Выйти из полноэкранного режима',
   'Fullscreen unavailable. Try again or use browser controls.':'Полноэкранный режим недоступен. Повторите попытку или используйте управление браузера.',
@@ -32,7 +41,7 @@ const ru:Record<string,string> = {
   "Applies to displayed times, archive dates and every recording schedule. Existing recording timestamps stay unchanged.":"Применяется ко времени в интерфейсе, датам архива и всем расписаниям записи. Метки времени существующих записей не изменяются.",
   "Timezone saved. Recording schedules now use this timezone.":"Часовой пояс сохранён. Расписания записи используют этот часовой пояс.",
   "Schedule timezone":"Часовой пояс расписания",
-  "Uses the installation timezone configured on Overview.":"Используется часовой пояс устройства, настроенный на странице «Обзор».",
+  "Uses the installation timezone configured in Account.":"Используется часовой пояс устройства, настроенный в разделе «Аккаунт».",
   "Find footage by camera, date and time in the installation timezone.":"Поиск записи по камерам, дате и времени в часовом поясе устройства.",
   "Choose cameras…":"Выберите камеры…",
   "Multiple cameras":"Несколько камер",

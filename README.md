@@ -147,7 +147,8 @@ To recover, keep the application stopped, restore the complete matching backup w
 
 ## Interface and API
 
-- **Overview:** camera counts, connectivity, recording progress, free space, errors, and installation timezone settings. Watch opens `/cameras/<id>/live` for that camera’s main stream. Refresh and browser navigation preserve the camera; saved Multiview selections stay independent.
+- **Account:** language, installation timezone, configured username and logout. `POST /api/logout` clears the browser session cookie; cached HTTP Basic credentials do not authenticate application requests. Account passwords are configured through the environment, with no UI password-change flow.
+- **Overview:** camera counts, connectivity, recording progress, free space and errors. Watch opens `/cameras/<id>/live` for that camera’s main stream. Refresh and browser navigation preserve the camera; saved Multiview selections stay independent.
 - **Cameras:** add, edit, disable, check, and delete cameras. Blank passwords or RTSP URLs preserve saved values during editing; a separate switch removes the substream. List URLs hide paths and query parameters that may contain secrets.
 - **Multiview:** add live cameras, drag tile headers, resize using the corner, and choose `contain`/`cover`. Individual viewing uses the main stream.
 - **Archive:** investigate one, several, or all cameras at a shared local date/time. Aligned availability tracks expose gaps; shared controls provide play/pause, seek, and speed. Each camera can independently enter fullscreen. Segment transitions happen independently. Single-camera previous/next, automatic-next, pagination, and downloads remain available.
@@ -165,7 +166,7 @@ OpenAPI is available at `/docs`. Main routes include:
 | Storage and notifications | `GET /api/storage/status`, `GET /api/storage/destinations`, `PUT /api/storage/destinations/{name}`, `POST /api/storage/destinations/{name}/protection`, `GET /api/notifications/status` |
 | Service health | `GET /health`, `GET /ready`, `GET /metrics` |
 
-When authentication is enabled, `POST /api/login` creates an HttpOnly session cookie. Basic authentication is also supported for CLI clients.
+When authentication is enabled, `POST /api/login` creates an HttpOnly session cookie. CLI clients use the same login endpoint and retain its session cookie. Unauthenticated protected APIs return 401 without an HTTP Basic challenge.
 
 ## Diagnostics
 
@@ -259,7 +260,7 @@ The form sends only changed fields using `PATCH /api/cameras/{id}`. Omitted fiel
 
 ## Weekly recording schedules
 
-In the camera editor, enable **Limit recording hours**, configure the installation timezone in **Overview**, and specify 1–14 windows with weekdays and times. No schedule means continuous recording. `enabled` and `recording_enabled` remain the main switches: schedules do not enable disabled cameras or restrict live viewing.
+In the camera editor, enable **Limit recording hours**, configure the installation timezone in **Account**, and specify 1–14 windows with weekdays and times. No schedule means continuous recording. `enabled` and `recording_enabled` remain the main switches: schedules do not enable disabled cameras or restrict live viewing.
 
 Example `recording_schedule` value in a camera create/update request:
 
@@ -291,13 +292,13 @@ The queue holds at most 1000 pending events; completed/failed events are removed
 
 The interface supports English and Russian. English is the default regardless of browser language. Set `DEFAULT_LANGUAGE=en` or `DEFAULT_LANGUAGE=ru` in `.env` and recreate the container (`docker compose up -d --build`) to change the initial language. Other values fail startup with a clear error.
 
-The **Language** selector is available before login and on every page. Changes apply immediately and are remembered in browser local storage, overriding the server default. Switching languages preserves forms, layouts, archive selection, and playback. Dates use the selected language and installation timezone. With browser storage disabled, switching works for the current visit; the next visit uses the server default. Remove the `nvr-language` local-storage key to restore the server default.
+The **Language** selector is in **Account → Preferences** (`/account`), accessed from the bottom of the sidebar (beside the product name on mobile). Changes apply immediately and are remembered in browser local storage, overriding the server default. The login page uses the saved browser preference or server default. Dates use the selected language and installation timezone. With browser storage disabled, switching works for the current visit; the next visit uses the server default. Remove the `nvr-language` local-storage key to restore the server default.
 
 `GET /api/language` returns only `{"default_language":"en"}` (or `ru`) without authentication so login can use the configured language. Normal configuration and camera/storage APIs retain their authentication requirements.
 
 ## Installation timezone and synchronized archive
 
-Configure the installation timezone in **Overview → Appliance time**. `APP_TIMEZONE=UTC` is the initial default; a UI-saved preference takes precedence and persists in `/data/settings.json` on the existing data volume. No database migration is required. Recording metadata, filenames, logs, and webhook payloads remain UTC.
+Configure the installation timezone in **Account → Preferences → Change timezone**. `APP_TIMEZONE=UTC` is the initial default; a UI-saved preference takes precedence and persists in `/data/settings.json` on the existing data volume. No database migration is required. Recording metadata, filenames, logs, and webhook payloads remain UTC.
 
 **Upgrade note:** existing per-camera schedule timezone fields are retained for compatibility, but every schedule now follows the installation timezone. Configure it before relying on schedules after upgrading.
 

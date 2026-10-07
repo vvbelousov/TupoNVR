@@ -16,3 +16,14 @@ test('normal pages have reloadable URLs independent of live camera URLs',()=>{
   for(const page of ['Overview','Cameras','Multiview','Archive','Storage'])assert.deepEqual(route(pageURL(page)),{page,cameraId:null});
   assert.deepEqual(route('/?page=unexpected'),{page:'Overview',cameraId:null});
 });
+
+test('account route supports navigation, reload and a trailing slash',()=>{
+  assert.equal(pageURL('Account'),'/account');
+  for(const url of ['/account','/account/'])assert.deepEqual(route(url),{page:'Account',cameraId:null});
+});
+
+test('direct protected page paths preserve the requested destination',()=>{
+  for(const [path,page] of Object.entries({overview:'Overview',multiview:'Multiview',archive:'Archive',settings:'Storage'})){
+    for(const suffix of ['', '/'])assert.deepEqual(route(`/${path}${suffix}`),{page,cameraId:null});
+  }
+});

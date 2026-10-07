@@ -76,7 +76,7 @@ def test_timezone_persistence_auth_validation_and_no_database_changes(tmp_path,m
     with TestClient(main.app) as client:
         assert client.get('/api/time').status_code==401
         assert client.put('/api/time',json={'timezone':'Europe/Moscow'}).status_code==401
-        client.auth=('admin','secret')
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         assert client.get('/api/time').json()['timezone']=='UTC'
         assert 'America/New_York' in client.get('/api/time').json()['timezones']
         insert(main,1,'2026-10-06T08:00:00+00:00','2026-10-06T08:01:00+00:00')
@@ -142,7 +142,7 @@ def test_global_timezone_drives_legacy_schedules_and_overnight_dst(tmp_path,monk
 def test_batch_timeline_resolver_offsets_gaps_and_local_date_overlap(tmp_path,monkeypatch):
     main=client_setup(tmp_path,monkeypatch)
     with TestClient(main.app) as client:
-        client.auth=('admin','secret')
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         a=insert(main,1,'2026-10-05T20:59:00+00:00','2026-10-05T21:03:00+00:00')
         b=insert(main,2,'2026-10-05T21:00:30+00:00','2026-10-05T21:02:00+00:00')
         c=insert(main,3,'2026-10-05T21:04:00+00:00','2026-10-05T21:05:00+00:00')

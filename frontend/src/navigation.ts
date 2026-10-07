@@ -1,6 +1,10 @@
 const pages=['Overview','Cameras','Multiview','Archive','Storage'];
 export type Route={page:string;cameraId:number|null};
 export function readRoute(location:{pathname:string;search:string}):Route{
+  const direct=location.pathname.replace(/\/$/,'').slice(1);
+  const aliases:Record<string,string>={overview:'Overview',multiview:'Multiview',archive:'Archive',settings:'Storage'};
+  if(aliases[direct])return {page:aliases[direct],cameraId:null};
+  if(/^\/account\/?$/.test(location.pathname))return {page:'Account',cameraId:null};
   const match=/^\/cameras\/([^/]+)\/live\/?$/.exec(location.pathname);
   if(match){
     const id=/^[1-9]\d*$/.test(match[1])?Number(match[1]):NaN;
@@ -10,4 +14,4 @@ export function readRoute(location:{pathname:string;search:string}):Route{
   return {page:pages.includes(page)?page:'Overview',cameraId:null};
 }
 export const liveURL=(id:number)=>`/cameras/${id}/live`;
-export const pageURL=(page:string)=>page==='Overview'?'/':`/?page=${encodeURIComponent(page)}`;
+export const pageURL=(page:string)=>page==='Account'?'/account':page==='Overview'?'/':`/?page=${encodeURIComponent(page)}`;
