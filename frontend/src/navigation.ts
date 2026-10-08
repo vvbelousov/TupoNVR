@@ -15,3 +15,10 @@ export function readRoute(location:{pathname:string;search:string}):Route{
 }
 export const liveURL=(id:number)=>`/cameras/${id}/live`;
 export const pageURL=(page:string)=>page==='Account'?'/account':page==='Overview'?'/':`/?page=${encodeURIComponent(page)}`;
+
+export const archiveURL=(id:number,time:number)=>`/archive?camera=${id}&at=${encodeURIComponent(new Date(time).toISOString())}`;
+export function archiveTarget(search:string){
+  const params=new URLSearchParams(search),id=Number(params.get('camera')),instant=params.get('at')||'',stamp=Date.parse(instant);
+  if(!/(Z|[+-]\d{2}:\d{2})$/.test(instant))return null;
+  return Number.isSafeInteger(id)&&id>0&&Number.isFinite(stamp)?{id,stamp}:null;
+}

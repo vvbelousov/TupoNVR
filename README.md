@@ -19,7 +19,7 @@ TupoNVR keeps IP camera recording manageable for a home, small CCTV installation
 
 Sometimes you just need an NVR that records your cameras and lets you find what happened. TupoNVR follows the Unix philosophy and KISS principle: a focused application, established tools, and a small deployment you can understand and maintain yourself.
 
-One application container and one MediaMTX container handle recording, live view, and archive browsing. Recording continues when every browser tab is closed. Video is copied without server transcoding.
+One application container and one MediaMTX container handle recording, live view, and archive browsing. Recording continues when every browser tab is closed. Recording uses stream copying; optional exact interval exports encode video through the same FFmpeg installation.
 
 ## Features
 
@@ -27,6 +27,7 @@ One application container and one MediaMTX container handle recording, live view
 - Live view for individual cameras and saved Multiview layouts with draggable, resizable tiles and optional camera substreams.
 - Original video recording into MP4 segments, configurable retention, and downloads.
 - Browse one or several cameras on a shared archive timeline with play/pause, seek, speed controls, gaps, and independent segment transitions.
+- Export a camera interval as one MP4, mark boundaries at the timeline cursor, and save live/archive frames as PNG. Open recent recordings directly from live view and zoom to 5/15/30/60 minutes.
 - Weekly recording schedules and an installation-wide timezone, including DST-aware archive selection.
 - Per-destination storage checks and optional identity protection for missing external mounts.
 - English/Russian interface, optional UI/API login, generic webhooks, and health/metrics endpoints.
@@ -111,7 +112,7 @@ Copy [.env.example](.env.example) to `.env`; it contains all Compose settings. A
 | `WEBHOOK_DEBOUNCE_SECONDS` | `60` | Continuous failure duration before notification |
 | `WEBHOOK_COOLDOWN_SECONDS` | `600` | Minimum interval between new incident notifications per subject |
 
-Recordings contain **video only**, copied into roughly ten-minute MP4 segments. Filenames and metadata remain UTC; the interface and schedules use the installation timezone. Archive shows finalized segments after indexing, normally on a five-minute scan, and also after a clean recorder stop.
+Recordings contain **video only**, copied into roughly ten-minute MP4 segments. Filenames and metadata remain UTC; the interface and schedules use the installation timezone. Archive shows finalized segments after indexing, normally on a five-minute scan, and also after a clean recorder stop. **Export interval** joins available footage and reports omitted gaps. Missing or damaged files fail explicitly. Temporary exports expire after one hour or are removed after download. See the [retrieval workflow and API limits](docs/time-and-archive.md#interval-exports-and-frame-retrieval).
 
 Storage settings also provide [manual recording cleanup](docs/recording-cleanup.md): preview and delete recordings by camera, period, or individual selection. Clearing everything requires typing `DELETE`; active recording directories are excluded.
 
@@ -132,7 +133,7 @@ TupoNVR is not intended to grow into an enterprise video management system (VMS)
 ## Known limitations
 
 - No audio recording, detection, PTZ, ONVIF discovery/control, multi-user management, or native mobile application is implemented.
-- No transcoding: browser codec support determines live/archive playback. H.265 support varies; a camera being Online does not guarantee browser playback.
+- Live/archive playback uses original footage; browser codec support determines playback. Exact interval exports encode H.264, while original-quality exports copy streams with keyframe-aligned cuts. H.265 support varies; a camera being Online does not guarantee browser playback.
 - Archive synchronization is practical rather than frame-accurate. Timestamp precision, camera latency, bandwidth, and browser decoder capacity limit accuracy and camera count; no capacity benchmark is claimed.
 - Sudden power loss can leave incomplete MP4 files. There is no automatic repair or backup; files missing the MP4 `moov` atom can be deleted by the indexer after 24 hours.
 - MediaMTX TCP endpoints must stay private. Login protects browser signaling through the application; use HTTPS and secure cookies outside a trusted LAN.

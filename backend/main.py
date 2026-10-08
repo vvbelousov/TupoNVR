@@ -163,6 +163,8 @@ async def lifespan(app):
     log.warning('MediaMTX HTTP/API/RTSP must remain private; publishing them bypasses application authentication')
     get_timezone()  # Fail startup clearly for invalid/corrupt time configuration.
     init()
+    from exports import jobs
+    jobs.startup()
     ROOT.mkdir(parents=True, exist_ok=True)
     gateway = MediaGateway()
     storage_monitor = StorageMonitor(ROOT, MIN_FREE)
@@ -226,6 +228,7 @@ async def lifespan(app):
         for worker in workers:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        await asyncio.to_thread(jobs.close)
         await supervisor.stop()
         await storage_monitor.close()
         await hooks.close()
@@ -967,6 +970,41 @@ def segment(sid):
     if not path.resolve().is_relative_to(root) or path.is_symlink() or not path.is_file():
         raise HTTPException(404)
     return path
+
+class ExportInput(BaseModel):
+    camera_id: int = Field(gt=0)
+    start: datetime
+    end: datetime
+    mode: str = Field(default='exact', pattern=r'^(exact|copy)$')
+
+
+@app.post('/api/recordings/exports', dependencies=[Depends(auth)], status_code=202)
+def create_export(value: ExportInput):
+    from exports import jobs
+    start, end = archive_range(value.start, value.end)
+    return jobs.create(value.camera_id, start, end, value.mode, segment)
+
+
+@app.get('/api/recordings/exports/{token}', dependencies=[Depends(auth)])
+def export_status(token: str):
+    from exports import jobs
+    return jobs.status(token)
+
+
+@app.get('/api/recordings/exports/{token}/download', dependencies=[Depends(auth)])
+def export_download(token: str):
+    from exports import jobs
+    job = jobs.download(token)
+
+    class ExportResponse(FileResponse):
+        async def __call__(self, scope, receive, send):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                jobs.finish_download(token)
+
+    return ExportResponse(job['directory'] / 'export.mp4', media_type='video/mp4', filename=job['filename'])
+
 
 @app.get('/api/recordings/{sid}', dependencies=[Depends(auth)])
 def play(sid: int):

@@ -27,3 +27,15 @@ test('direct protected page paths preserve the requested destination',()=>{
     for(const suffix of ['', '/'])assert.deepEqual(route(`/${path}${suffix}`),{page,cameraId:null});
   }
 });
+
+const {archiveURL,archiveTarget}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+test('live archive link keeps camera and an absolute UTC instant across midnight and repeated hours',()=>{
+  for(const instant of ['2026-10-05T23:59:00Z','2026-11-01T05:30:00Z','2026-11-01T06:30:00Z']){
+    const stamp=Date.parse(instant),url=new URL(archiveURL(7,stamp),'http://nvr.test');
+    assert.equal(readRoute(url).page,'Archive');
+    assert.deepEqual(archiveTarget(url.search),{id:7,stamp});
+  }
+});
+test('invalid archive navigation parameters are ignored',()=>{
+  for(const query of ['','?camera=0&at=2026-10-08','?camera=abc&at=2026-10-08','?camera=1&at=invalid','?camera=1&at=2026-10-08T12:00:00','?camera=9007199254740992&at=2026-10-08'])assert.equal(archiveTarget(query),null);
+});
