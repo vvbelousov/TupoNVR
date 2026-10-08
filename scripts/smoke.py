@@ -1,6 +1,6 @@
 """Clean Compose recording test; touches only a unique temporary deployment."""
 import argparse
-import base64
+import http.cookiejar
 import json
 import os
 import secrets
@@ -49,14 +49,14 @@ def smoke(image, uid, gid):
     def compose_run(*arguments, **kwargs):
         return run([*compose, *arguments], **kwargs)
     username, password = 'smoke', secrets.token_hex(24)
-    authorization = 'Basic ' + base64.b64encode(f'{username}:{password}'.encode()).decode()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     port, web_port, udp_port = free_port(), free_port(), free_port(socket.SOCK_DGRAM)
     base = f'http://127.0.0.1:{port}'
     def request(path, method='GET', body=None, headers=None):
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(base + path, data=data, method=method,
-                                     headers={'Authorization': authorization, 'Content-Type': 'application/json', **(headers or {})})
-        with urllib.request.urlopen(req, timeout=20) as response:
+                                     headers={'Content-Type': 'application/json', **(headers or {})})
+        with opener.open(req, timeout=20) as response:
             content = response.read()
             return response.status, json.loads(content) if response.headers.get_content_type() == 'application/json' else content
     try:
@@ -67,7 +67,7 @@ def smoke(image, uid, gid):
         config = (ROOT / 'mediamtx.yml').read_text().replace('paths: {}', 'paths:\n  source: {}')
         config = config.replace('      - action: read', '      - action: publish\n      - action: read')
         (temporary / 'mediamtx.yml').write_text(config)
-        values = {'NVR_IMAGE': image, 'NVR_PORT': port, 'WEBRTC_PORT': web_port, 'WEBRTC_UDP_PORT': udp_port,
+        values = {'NVR_IMAGE': image, 'NVR_BIND': '127.0.0.1', 'NVR_PORT': port, 'WEBRTC_PORT': web_port, 'WEBRTC_UDP_PORT': udp_port,
                   'WEBRTC_HOST': '127.0.0.1', 'DATA_DIR': './data', 'DEFAULT_RECORDING_PATH': './recordings',
                   'MIN_FREE_SPACE_GB': 0, 'SEGMENT_SECONDS': 2, 'AUTH_USERNAME': username, 'AUTH_PASSWORD': password,
                   'APP_TIMEZONE': 'UTC', 'DEFAULT_LANGUAGE': 'en', 'COOKIE_SECURE': 'false', 'LOG_LEVEL': 'WARNING',
@@ -87,10 +87,12 @@ def smoke(image, uid, gid):
             urllib.request.urlopen(base + '/api/cameras', timeout=5)
         except urllib.error.HTTPError as error:
             assert error.code == 401
+            assert 'www-authenticate' not in error.headers
         else:
             raise AssertionError('Configured authentication must reject unauthenticated API access')
+        assert request('/api/login', 'POST', {'username': username, 'password': password})[0] == 200
         assert request('/api/cameras')[1] == []
-        run(['docker', 'run', '-d', '--rm', '--name', source_name, '--network', project + '_default',
+        run(['docker', 'run', '-d', '--rm', '--name', source_name, '--network', project + '_media',
              '--entrypoint', 'ffmpeg', image, '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi',
              '-i', 'testsrc2=size=128x96:rate=5', '-c:v', 'libx264', '-threads', '1', '-g', '10',
              '-pix_fmt', 'yuv420p', '-f', 'rtsp', '-rtsp_transport', 'tcp', 'rtsp://mediamtx:8554/source'])
@@ -127,11 +129,21 @@ def smoke(image, uid, gid):
         assert request('/api/time', 'PUT', {'timezone': 'Europe/Moscow'})[0] == 200
         compose_run('restart', 'nvr-app')
         wait_for(lambda: request('/ready')[0] == 200, 'restart readiness')
+        # In-memory sessions deliberately do not survive application restarts.
+        # Keep the old cookie to verify revocation before obtaining a new one.
+        try:
+            request('/api/config')
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
+            assert 'www-authenticate' not in error.headers
+        else:
+            raise AssertionError('Restart must invalidate the previous session')
+        assert request('/api/login', 'POST', {'username': username, 'password': password})[0] == 200
         assert request('/api/config')[1]['timezone'] == 'Europe/Moscow'
         assert request('/api/cameras')[1][0]['id'] == cid
         assert request('/api/storage/destinations')[1][0]['expected_marker'] == marker_id
         assert any(row['id'] == sid for row in request(f'/api/recordings?camera_id={cid}')[1])
-        print('PASS: clean Compose install, health, auth, synthetic RTSP, diagnostics, recording, storage protection/recovery, archive/range/download, and restart persistence')
+        print('PASS: clean Compose install, health, auth, synthetic RTSP, diagnostics, recording, storage protection/recovery, archive/range/download, restart session revocation/relogin, and persistence')
     finally:
         subprocess.run(['docker', 'rm', '-f', source_name], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # Cleanup is confined to this newly created directory/project, never user data.

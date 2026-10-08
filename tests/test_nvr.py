@@ -142,7 +142,7 @@ def test_unicode_auth_and_malformed_session(tmp_path, monkeypatch):
     import pytest
     request = main.Request({'type': 'http', 'headers': [(b'cookie', b'nvr_session=999999999999.\xff')]})
     with pytest.raises(main.HTTPException) as exc:
-        asyncio.run(main.auth(request, None))
+        asyncio.run(main.auth(request))
     assert exc.value.status_code == 401
 
 
@@ -151,8 +151,9 @@ def test_layout_rejects_duplicate_and_nonpositive_camera_ids(tmp_path, monkeypat
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     tile = {'camera_id': 1, 'x': 0, 'y': 0, 'w': 1, 'h': 1}
     with TestClient(main.app) as client:
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         for tiles in ([tile, tile], [{**tile, 'camera_id': 0}]):
-            assert client.put('/api/layout', auth=('admin', 'secret'), json={'columns': 2, 'tiles': tiles}).status_code == 422
+            assert client.put('/api/layout', json={'columns': 2, 'tiles': tiles}).status_code == 422
 
 
 def test_camera_update_preserves_secret_and_status_preserves_recorder_error(tmp_path, monkeypatch):
@@ -211,7 +212,8 @@ def test_cleanup_never_deletes_external_files(tmp_path, monkeypatch):
     video.cleanup([], set())
     assert external.read_bytes() == b'private'
     with main.db() as c:
-        assert c.execute('SELECT COUNT(*) FROM segments').fetchone()[0] == 0
+        # Unsafe paths remain indexed for inspection; cleanup never loses track of remaining files.
+        assert c.execute('SELECT COUNT(*) FROM segments').fetchone()[0] == 2
 
 
 def test_index_rejects_symlink_escapes_and_invalid_durations(tmp_path, monkeypatch):
@@ -269,18 +271,20 @@ def test_recording_http_ranges_and_path_protection(tmp_path, monkeypatch):
     main, video = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     with TestClient(main.app) as client:
-        path = video.ROOT / 'sample.mp4'
+        path = video.ROOT / 'default/1/2026/01/01/00/20260101T000000.mp4'
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'0123456789')
         with main.db() as c:
             sid = c.execute('INSERT INTO segments(camera_id,path,started_at,ended_at,size_bytes) VALUES(?,?,?,?,?)', (1, str(path), '2026-01-01', '2026-01-01', 10)).lastrowid
         url = f'/api/recordings/{sid}'
         assert client.get(url).status_code == 401
-        response = client.get(url, auth=('admin', 'secret'), headers={'Range': 'bytes=2-5'})
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
+        response = client.get(url, headers={'Range': 'bytes=2-5'})
         assert response.status_code == 206
         assert response.content == b'2345'
-        assert client.get(url + '/download', auth=('admin', 'secret')).content == b'0123456789'
-        assert client.delete(url, auth=('admin', 'secret')).status_code == 204
-        assert client.get(url, auth=('admin', 'secret')).status_code == 404
+        assert client.get(url + '/download').content == b'0123456789'
+        assert client.delete(url).status_code == 204
+        assert client.get(url).status_code == 404
 
 
 def test_hour_rotation_kills_unresponsive_recorder_and_restarts(tmp_path, monkeypatch):
@@ -334,11 +338,12 @@ def test_cross_origin_writes_are_rejected_and_proxy_https_is_supported(tmp_path,
     main, _ = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     credentials = {'username': 'admin', 'password': 'secret'}
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url='https://testserver') as client:
         assert client.post('/api/login', json=credentials, headers={'Origin': 'https://attacker.example'}).status_code == 403
         assert client.post('/api/login', json=credentials, headers={'Origin': 'null'}).status_code == 403
         assert client.post('/api/login', json=credentials, headers={'Origin': 'https://testserver'}).status_code == 200
-        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'http://testserver'}).status_code == 200
+        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'http://testserver'}).status_code == 403
+        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'https://testserver'}).status_code == 200
 
 
 def test_stop_returns_saved_state_during_gateway_outage(tmp_path, monkeypatch):
@@ -426,4 +431,63 @@ def test_probe_failures_do_not_delete_valid_footage(tmp_path, monkeypatch):
         raise subprocess.CalledProcessError(1, 'ffprobe', stderr=b'moov atom not found')
     monkeypatch.setattr(video.subprocess, 'run', corrupt)
     video.index_segments(1, root)
-    assert not path.exists()
+    # Unindexed damaged files require inspection; indexing never deletes them.
+    assert path.exists()
+
+
+def test_single_camera_url_serves_ui_for_direct_navigation(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    main, _ = setup(tmp_path, monkeypatch)
+    assets = tmp_path / 'ui'
+    assets.mkdir()
+    (assets / 'index.html').write_text('<html>camera UI</html>')
+    (assets / 'reader.js').write_text('// player')
+    application = FastAPI()
+    main.mount_ui(application, assets)
+    with TestClient(application) as client:
+        for camera_id in ['42', '999', 'invalid']:
+            response = client.get(f'/cameras/{camera_id}/live')
+            assert response.status_code == 200
+            assert response.headers['content-type'].startswith('text/html')
+            assert response.text == '<html>camera UI</html>'
+        assert client.get('/').text == '<html>camera UI</html>'
+        assert client.get('/reader.js').text == '// player'
+        assert client.get('/api/unknown').status_code == 404
+        assert client.get('/missing.js').status_code == 404
+
+
+def test_account_identity_cookie_logout_and_direct_route(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    main, _ = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
+    with TestClient(main.app) as client:
+        assert client.get('/api/config').status_code == 401
+        assert client.post('/api/login', json={'username':'admin','password':'wrong'}).status_code == 401
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
+        assert client.get('/api/config').json()['username'] == 'admin'
+        result = client.post('/api/logout')
+        assert result.status_code == 204
+        assert 'HttpOnly' in result.headers['set-cookie']
+        assert client.get('/api/config').status_code == 401
+        assert client.post('/api/logout').status_code == 204
+        # Cached browser Basic credentials cannot bypass logout.
+        response = client.get('/api/config', auth=('admin','secret'))
+        assert response.status_code == 401
+        assert 'www-authenticate' not in response.headers
+    assets = tmp_path / 'ui'
+    assets.mkdir()
+    (assets / 'index.html').write_text('Account application')
+    application = FastAPI()
+    main.mount_ui(application, assets)
+    with TestClient(application) as client:
+        for path in ('/account','/account/'):
+            assert client.get(path).text == 'Account application'
+
+
+def test_account_without_configured_auth_has_no_invented_username(tmp_path, monkeypatch):
+    main, _ = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(main, 'AUTH_USER', '')
+    monkeypatch.setattr(main, 'AUTH_PASS', '')
+    monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
+    with TestClient(main.app) as client:
+        assert client.get('/api/config').json()['username'] is None

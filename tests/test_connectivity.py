@@ -73,8 +73,8 @@ def test_status_and_dashboard_keep_connectivity_separate(tmp_path, monkeypatch, 
             return {'online': connectivity, 'connectivity_state': 'ONLINE' if connectivity else 'OFFLINE', 'bytes_received': 0}
     monkeypatch.setattr(main, 'MediaGateway', Gateway)
     with TestClient(main.app) as client:
-        auth = ('admin', 'secret')
-        created = client.post('/api/cameras', auth=auth, json={'name':'cam','rtsp_url':'rtsp://cam/live','recording_enabled':False})
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
+        created = client.post('/api/cameras', json={'name':'cam','rtsp_url':'rtsp://cam/live','recording_enabled':False})
         cid = created.json()['id']
         # No real recorder is started by this API contract test.
         with main.db() as connection:
@@ -85,14 +85,14 @@ def test_status_and_dashboard_keep_connectivity_separate(tmp_path, monkeypatch, 
             supervisor.procs[cid] = SimpleNamespace(returncode=None)
             supervisor.progress[cid] = {'started_tick':time.monotonic(),'last_tick':time.monotonic(),'last_progress_at':'2026-10-06T12:00:00Z'}
         supervisor.errors[cid] = 'Previous recorder failure'
-        result = client.get(f'/api/cameras/{cid}/status', auth=auth).json()
+        result = client.get(f'/api/cameras/{cid}/status').json()
         assert result['state'] == ('ONLINE' if connectivity else 'OFFLINE')
         assert result['online'] is connectivity
         assert result['recording_enabled'] is recording
         assert result['recording_health'] == health
-        assert client.get('/api/dashboard',auth=auth).json()['online'] == int(connectivity)
-        assert bool(client.get('/api/dashboard',auth=auth).json()['errors']) is recording
-        metrics = client.get('/metrics',auth=auth).text
+        assert client.get('/api/dashboard').json()['online'] == int(connectivity)
+        assert bool(client.get('/api/dashboard').json()['errors']) is recording
+        metrics = client.get('/metrics').text
         assert f'camera_online{{camera_id="{cid}"}} {int(connectivity)}' in metrics
         supervisor.procs.clear()
 
@@ -193,8 +193,8 @@ def test_invalidated_manual_check_returns_retry_response(tmp_path, monkeypatch):
             raise asyncio.CancelledError()
     monkeypatch.setattr(main, 'MediaGateway', Gateway)
     with TestClient(main.app) as client:
-        auth = ('admin','secret')
-        cid = client.post('/api/cameras',auth=auth,json={'name':'cam','rtsp_url':'rtsp://cam/live','recording_enabled':False}).json()['id']
-        response = client.post(f'/api/cameras/{cid}/check',auth=auth)
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
+        cid = client.post('/api/cameras',json={'name':'cam','rtsp_url':'rtsp://cam/live','recording_enabled':False}).json()['id']
+        response = client.post(f'/api/cameras/{cid}/check')
         assert response.status_code == 409
         assert response.json()['detail'] == 'Camera changed; retry check'

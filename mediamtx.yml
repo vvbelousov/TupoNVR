@@ -9,10 +9,16 @@ hls: no
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+# Native discovery sees container interfaces in bridge mode and host interfaces
+# with compose.lan.yml. Explicit WEBRTC_HOST adds candidates in either mode.
+webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts: []
 srt: no
 moq: no
 paths: {}
 authMethod: internal
+# Trusted service network only: API, RTSP and WHEP HTTP must never be published.
+# Browser signaling is authenticated by the application's /api/media proxy.
 authInternalUsers:
   - user: any
     ips: []

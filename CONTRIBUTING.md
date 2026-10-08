@@ -11,7 +11,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements-dev.txt
 npm ci --prefix frontend
 cp .env.example .env
-docker compose up -d --build
+NVR_IMAGE= docker compose up -d --build
 ```
 
 Use disposable data and synthetic cameras while developing. Never submit `.env`, databases, recordings, unredacted screenshots, tokens, or private camera URLs.
@@ -21,7 +21,7 @@ For backend iteration, MediaMTX must be reachable on both its API and RTSP ports
 ```sh
 docker run --rm --name tuponvr-dev-mediamtx \
   -p 127.0.0.1:9997:9997 -p 127.0.0.1:8554:8554 \
-  -p 8889:8889 -p 8189:8189/udp \
+  -p 127.0.0.1:8889:8889 -p 8189:8189/udp \
   -e MTX_WEBRTCADDITIONALHOSTS=127.0.0.1 \
   -v "$PWD/mediamtx.yml:/mediamtx.yml:ro" bluenviron/mediamtx:1.21.1
 ```
@@ -30,7 +30,7 @@ In another terminal:
 
 ```sh
 DATABASE_PATH="$PWD/data-dev/nvr.sqlite3" DEFAULT_RECORDING_PATH="$PWD/recordings-dev" \
-  MEDIAMTX_API=http://127.0.0.1:9997 MEDIAMTX_RTSP_HOST=127.0.0.1 \
+  MEDIAMTX_API=http://127.0.0.1:9997 MEDIAMTX_RTSP_HOST=127.0.0.1 MEDIAMTX_WEBRTC=http://127.0.0.1:8889 \
   .venv/bin/uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --workers 1
 ```
 

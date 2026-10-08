@@ -3,11 +3,10 @@ import json
 import logging
 import os
 import secrets
-import hmac
-import hashlib
 import time
 import shutil
 import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import date as CivilDate, time as CivilTime, datetime, timezone, timedelta
 from pathlib import Path
@@ -15,7 +14,6 @@ from urllib.parse import urlsplit, urlunsplit, unquote
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field, field_validator
 from db import db, init
 from video import MediaGateway, ProcessSupervisor, ROOT, MIN_FREE, cleanup
@@ -24,6 +22,7 @@ from storage import StorageMonitor, NAME_PATTERN
 from notifications import Webhooks
 from timeconfig import get_timezone, save_timezone, validate_zone, valid_timezones, day_range, resolve_local
 from version import VERSION
+from security import Sessions, MediaProxy
 
 class JsonLog(logging.Formatter):
     def format(self, record):
@@ -34,7 +33,6 @@ handler.setFormatter(JsonLog())
 logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'), handlers=[handler])
 log = logging.getLogger('nvr')
 logging.getLogger('httpx').setLevel(logging.WARNING)
-security = HTTPBasic(auto_error=False)
 AUTH_USER = os.getenv('AUTH_USERNAME', '')
 AUTH_PASS = os.getenv('AUTH_PASSWORD', '')
 DEFAULT_LANGUAGE = os.getenv('DEFAULT_LANGUAGE', 'en').lower()
@@ -42,28 +40,17 @@ if DEFAULT_LANGUAGE not in ('en', 'ru'):
     raise RuntimeError('DEFAULT_LANGUAGE must be en or ru')
 if bool(AUTH_USER) != bool(AUTH_PASS):
     raise RuntimeError('Set both AUTH_USERNAME and AUTH_PASSWORD, or neither')
-SESSION_KEY = hashlib.sha256((AUTH_USER + '\0' + AUTH_PASS).encode()).digest()
-
-def token(expiry):
-    message = str(expiry)
-    return message + '.' + hmac.new(SESSION_KEY, message.encode(), hashlib.sha256).hexdigest()
+sessions = Sessions()
 
 class LoginInput(BaseModel):
     username: str
     password: str
 
-async def auth(request: Request, credentials: HTTPBasicCredentials | None = Depends(security)):
+async def auth(request: Request):
     if not AUTH_USER and not AUTH_PASS:
         return
-    cookie = request.cookies.get('nvr_session', '')
-    try:
-        stamp = cookie.split('.')[0]
-        cookie_ok = int(stamp) > time.time() and secrets.compare_digest(cookie, token(int(stamp)))
-    except (ValueError, IndexError, TypeError):
-        cookie_ok = False
-    basic_ok = credentials is not None and secrets.compare_digest(credentials.username.encode(), AUTH_USER.encode()) and secrets.compare_digest(credentials.password.encode(), AUTH_PASS.encode())
-    if not cookie_ok and not basic_ok:
-        raise HTTPException(401, 'Authentication required', headers={'WWW-Authenticate': 'Basic realm="NVR"'})
+    if not sessions.valid(request.cookies.get('nvr_session', ''), AUTH_USER, AUTH_PASS):
+        raise HTTPException(401, 'Authentication required')
 
 class CameraInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -81,10 +68,11 @@ class CameraInput(BaseModel):
 
     @field_validator('rtsp_url', 'substream_url')
     @classmethod
-    def valid_url(cls, value):
+    def valid_url(cls, value, info):
         if value is None:
             return value
-        if value == '':
+        if value == '' and (info.field_name == 'substream_url' or cls is CameraUpdate):
+            # Legacy updates use an empty main URL to preserve the saved source.
             return value
         try:
             u = urlsplit(value)
@@ -169,21 +157,45 @@ def one(cid):
 
 @asynccontextmanager
 async def lifespan(app):
+    if not AUTH_USER:
+        log.warning('Authentication disabled: all reachable application and media routes are public')
+    elif os.getenv('COOKIE_SECURE', 'false').lower() != 'true':
+        log.warning('Secure cookies disabled: use HTTPS and COOKIE_SECURE=true outside a trusted LAN')
+    log.warning('MediaMTX HTTP/API/RTSP must remain private; publishing them bypasses application authentication')
     get_timezone()  # Fail startup clearly for invalid/corrupt time configuration.
     init()
+    from exports import jobs
+    jobs.startup()
     ROOT.mkdir(parents=True, exist_ok=True)
     gateway = MediaGateway()
     storage_monitor = StorageMonitor(ROOT, MIN_FREE)
     supervisor = ProcessSupervisor(gateway, storage_monitor)
     hooks = Webhooks()
     app.state.gateway = gateway
+    app.state.media = MediaProxy(os.getenv('MEDIAMTX_WEBRTC', 'http://mediamtx:8889'), sessions,
+                                lambda: (AUTH_USER, AUTH_PASS))
+    app.state.media.ready = False
     app.state.supervisor = supervisor
     app.state.storage = storage_monitor
     app.state.webhooks = hooks
     app.state.reconcile_lock = asyncio.Lock()
     app.state.protection_lock = asyncio.Lock()
     async def maintenance():
+        orphan_cleanup_pending = True
         while True:
+            await app.state.media.reap()
+            if orphan_cleanup_pending:
+                try:
+                    while True:
+                        existing = await gateway.call('GET', '/v3/webrtcsessions/list?itemsPerPage=1000')
+                        if not existing.get('items'):
+                            break
+                        for session in existing['items']:
+                            await gateway.call('POST', f"/v3/webrtcsessions/kick/{session['id']}")
+                    orphan_cleanup_pending = False
+                    app.state.media.ready = True
+                except Exception:
+                    log.warning('media_session_cleanup_pending')
             try:
                 await reconcile_state(app)
             except Exception:
@@ -217,10 +229,12 @@ async def lifespan(app):
         for worker in workers:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        await asyncio.to_thread(jobs.close)
         await supervisor.stop()
         await storage_monitor.close()
         await hooks.close()
         await gateway.close()
+        await app.state.media.close()
 
 app = FastAPI(title='TupoNVR', version=VERSION, lifespan=lifespan)
 
@@ -234,11 +248,21 @@ async def validation_error(request: Request, exc: RequestValidationError):
 @app.middleware('http')
 async def same_origin_writes(request: Request, call_next):
     origin = request.headers.get('origin')
-    if origin and request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
-        origin_url = urlsplit(origin)
-        if origin_url.scheme not in ('http', 'https') or origin_url.netloc != request.url.netloc:
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        if request.headers.get('sec-fetch-site') == 'cross-site':
             return Response(status_code=403)
-    return await call_next(request)
+        if origin:
+            try:
+                origin_url = urlsplit(origin)
+                allowed = origin_url.scheme == request.url.scheme and origin_url.netloc == request.url.netloc
+            except ValueError:
+                allowed = False
+            if not allowed:
+                return Response(status_code=403)
+    response = await call_next(request)
+    if request.url.path.startswith('/api/') or request.url.path == '/metrics':
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 def destination_markers():
     with db() as c:
@@ -306,13 +330,38 @@ async def invalidate_diagnostics(gateway, cid):
     getattr(gateway, 'checks', {}).pop(cid, None)
 
 @app.post('/api/login')
-def login(body: LoginInput, response: Response):
+async def login(body: LoginInput, request: Request, response: Response):
     if not AUTH_USER and not AUTH_PASS:
         return {'ok': True}
     if not secrets.compare_digest(body.username.encode(), AUTH_USER.encode()) or not secrets.compare_digest(body.password.encode(), AUTH_PASS.encode()):
         raise HTTPException(401, 'Invalid credentials')
-    response.set_cookie('nvr_session', token(int(time.time()) + 86400), httponly=True, samesite='strict', secure=os.getenv('COOKIE_SECURE','false').lower() == 'true', max_age=86400)
+    sessions.revoke(request.cookies.get('nvr_session', ''))
+    response.set_cookie('nvr_session', sessions.create(AUTH_USER, AUTH_PASS), httponly=True, samesite='strict', secure=os.getenv('COOKIE_SECURE','false').lower() == 'true', max_age=sessions.lifetime)
+    response.headers['Cache-Control'] = 'no-store'
     return {'ok': True}
+
+@app.post('/api/logout', status_code=204)
+async def logout(request: Request, response: Response):
+    sessions.revoke(request.cookies.get('nvr_session', ''))
+    if hasattr(request.app.state, 'media'):
+        await request.app.state.media.reap()
+    response.delete_cookie('nvr_session', httponly=True, samesite='strict',
+                           secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true')
+
+
+@app.options('/api/media/{stream}/whep', dependencies=[Depends(auth)])
+@app.post('/api/media/{stream}/whep', dependencies=[Depends(auth)])
+@app.patch('/api/media/{stream}/whep/{resource}', dependencies=[Depends(auth)])
+@app.delete('/api/media/{stream}/whep/{resource}', dependencies=[Depends(auth)])
+async def media(request: Request, stream: str, resource: str | None = None):
+    if not re.fullmatch(r'cam_[1-9][0-9]*(?:_sub)?', stream):
+        raise HTTPException(404, 'Stream not found')
+    if resource is not None and not re.fullmatch(r'[0-9a-fA-F-]{36}', resource):
+        raise HTTPException(404, 'Media session not found')
+    path = f'/{stream}/whep' + (f'/{resource}' if resource else '')
+    owner = request.cookies.get('nvr_session', '') if AUTH_USER else ''
+    return await request.app.state.media.forward(request, path, owner)
+
 
 @app.get('/health')
 def health():
@@ -333,7 +382,7 @@ def cameras():
 @app.get('/api/config', dependencies=[Depends(auth)])
 def browser_config():
     return {'webrtc_port': int(os.getenv('WEBRTC_PORT', '8889')), 'timezone': get_timezone(),
-            'now': datetime.now(timezone.utc).isoformat()}
+            'now': datetime.now(timezone.utc).isoformat(), 'username': AUTH_USER or None}
 
 
 class TimezoneInput(BaseModel):
@@ -605,6 +654,134 @@ def destinations():
 def notification_status():
     return app.state.webhooks.status()
 
+class CleanupCriteria(BaseModel):
+    model_config = {'extra': 'forbid'}
+    camera_ids: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    recording_ids: list[int] | None = Field(default=None, min_length=1, max_length=10000)
+    start: datetime | None = None
+    end: datetime | None = None
+
+    @field_validator('camera_ids', 'recording_ids')
+    @classmethod
+    def positive_ids(cls, value):
+        if value is not None and any(item < 1 for item in value):
+            raise ValueError('Expected positive IDs')
+        return sorted(set(value)) if value is not None else None
+
+
+def cleanup_matches(value):
+    where, args = [], []
+    for field, ids in [('camera_id', value.camera_ids), ('id', value.recording_ids)]:
+        if ids is not None:
+            where.append(field + ' IN (' + ','.join('?' for _ in ids) + ')')
+            args.extend(ids)
+    if value.start is not None or value.end is not None:
+        if value.start is None or value.end is None:
+            raise HTTPException(422, 'Both start and end are required')
+        start, end = utc_time(value.start), utc_time(value.end)
+        if start >= end:
+            raise HTTPException(422, 'Start must precede end')
+        where.extend(['started_at<?', 'ended_at>?'])
+        args.extend([end.isoformat(), start.isoformat()])
+    with db() as c:
+        return [dict(row) for row in c.execute('SELECT * FROM segments' +
+                (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY started_at,id', args)]
+
+
+cleanup_jobs = {}
+cleanup_jobs_lock = threading.RLock()
+
+
+@app.post('/api/recordings/cleanup/query', dependencies=[Depends(auth)])
+def cleanup_query(value: CleanupCriteria, offset: int = 0, limit: int = 100):
+    matches = cleanup_matches(value)
+    offset, limit = max(0, offset), max(1, min(500, limit))
+    return {'total': len(matches), 'recordings': [segment_metadata(row) for row in matches[offset:offset + limit]]}
+
+
+@app.post('/api/recordings/cleanup/preview', dependencies=[Depends(auth)])
+def cleanup_preview(value: CleanupCriteria):
+    import video
+    records = cleanup_matches(value)
+    token = secrets.token_urlsafe(24)
+    found = {row['id'] for row in records}
+    not_found = len(set(value.recording_ids or []) - found)
+    with video.ARCHIVE_LOCK:
+        eligible = [row for row in records if not video.is_active_path(Path(row['path']), row['camera_id'])]
+    preview = {'token': token, 'count': len(eligible), 'size_bytes': sum(row['size_bytes'] for row in eligible),
+               'cameras': sorted({row['camera_id'] for row in records}), 'criteria': value.model_dump(mode='json'),
+               'active_excluded': len(records) - len(eligible), 'not_found': not_found, 'clear_all': all(item is None for item in value.model_dump().values())}
+    with cleanup_jobs_lock:
+        for key, job in list(cleanup_jobs.items()):
+            if job['state'] != 'running' and time.monotonic() - job['created'] > 900:
+                del cleanup_jobs[key]
+        if len(cleanup_jobs) >= 32:
+            raise HTTPException(429, 'Too many cleanup previews; retry later')
+        cleanup_jobs[token] = {'created': time.monotonic(), 'state': 'preview', 'preview': preview,
+                               'records': eligible, 'processed': len(records) - len(eligible) + not_found, 'total': len(records) + not_found, 'deleted': 0,
+                               'reclaimed_bytes': 0, 'active': len(records) - len(eligible), 'missing': not_found, 'failed': 0}
+    return preview
+
+
+class CleanupConfirmation(BaseModel):
+    model_config = {'extra': 'forbid'}
+    token: str
+    confirmation: str
+
+
+def cleanup_worker(job):
+    import video
+    from recording_cleanup import MetadataUpdateError, delete_indexed
+    try:
+        for original in job['records']:
+            result, size = 'failed', 0
+            try:
+                with video.ARCHIVE_LOCK:
+                    with db() as c:
+                        row = c.execute('SELECT * FROM segments WHERE id=? AND path=?', (original['id'], original['path'])).fetchone()
+                    if row is not None and any(row[key] != original[key] for key in ('camera_id', 'started_at', 'ended_at', 'size_bytes')):
+                        result, size = 'failed', 0
+                    else:
+                        result, size = delete_indexed(row) if row else ('missing', 0)
+            except MetadataUpdateError as error:
+                size = error.reclaimed_bytes
+                log.exception('manual_cleanup_index_update_failed segment_id=%d', original['id'])
+            except Exception:
+                log.exception('manual_cleanup_failed segment_id=%d', original['id'])
+            with cleanup_jobs_lock:
+                job[result] += 1
+                job['reclaimed_bytes'] += size
+                job['processed'] += 1
+    finally:
+        with cleanup_jobs_lock:
+            job['state'] = 'done'
+            job['records'] = []
+
+
+@app.post('/api/recordings/cleanup/delete', dependencies=[Depends(auth)], status_code=202)
+def cleanup_execute(value: CleanupConfirmation):
+    with cleanup_jobs_lock:
+        job = cleanup_jobs.get(value.token)
+        if job is None or time.monotonic() - job['created'] > 900 and job['state'] == 'preview':
+            raise HTTPException(410, 'Cleanup preview expired; preview again')
+        expected = 'DELETE' if job['preview']['clear_all'] else 'confirm'
+        if value.confirmation != expected:
+            raise HTTPException(422, 'Explicit deletion confirmation required')
+        if job['state'] == 'preview':
+            job['state'] = 'running'
+            threading.Thread(target=cleanup_worker, args=(job,), daemon=True).start()
+    return {'token': value.token}
+
+
+@app.get('/api/recordings/cleanup/progress/{token}', dependencies=[Depends(auth)])
+def cleanup_progress(token: str):
+    with cleanup_jobs_lock:
+        job = cleanup_jobs.get(token)
+        if job is None:
+            raise HTTPException(404, 'Cleanup not found')
+        return {key: job[key] for key in ('state', 'processed', 'total', 'deleted', 'reclaimed_bytes', 'active', 'missing', 'failed')}
+
+
 @app.get('/api/recordings', dependencies=[Depends(auth)])
 def recordings(camera_id: int | None = None, date: str | None = None, limit: int = 200, offset: int = 0,
                start: datetime | None = None, end: datetime | None = None, camera_ids: str | None = None):
@@ -795,6 +972,41 @@ def segment(sid):
         raise HTTPException(404)
     return path
 
+class ExportInput(BaseModel):
+    camera_id: int = Field(gt=0)
+    start: datetime
+    end: datetime
+    mode: str = Field(default='exact', pattern=r'^(exact|copy)$')
+
+
+@app.post('/api/recordings/exports', dependencies=[Depends(auth)], status_code=202)
+def create_export(value: ExportInput):
+    from exports import jobs
+    start, end = archive_range(value.start, value.end)
+    return jobs.create(value.camera_id, start, end, value.mode, segment)
+
+
+@app.get('/api/recordings/exports/{token}', dependencies=[Depends(auth)])
+def export_status(token: str):
+    from exports import jobs
+    return jobs.status(token)
+
+
+@app.get('/api/recordings/exports/{token}/download', dependencies=[Depends(auth)])
+def export_download(token: str):
+    from exports import jobs
+    job = jobs.download(token)
+
+    class ExportResponse(FileResponse):
+        async def __call__(self, scope, receive, send):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                jobs.finish_download(token)
+
+    return ExportResponse(job['directory'] / 'export.mp4', media_type='video/mp4', filename=job['filename'])
+
+
 @app.get('/api/recordings/{sid}', dependencies=[Depends(auth)])
 def play(sid: int):
     return FileResponse(segment(sid), media_type='video/mp4')
@@ -806,10 +1018,21 @@ def download(sid: int):
 
 @app.delete('/api/recordings/{sid}', dependencies=[Depends(auth)], status_code=204)
 def delete(sid: int):
-    path = segment(sid)
-    path.unlink(missing_ok=True)
-    with db() as c:
-        c.execute('DELETE FROM segments WHERE id=?', (sid,))
+    import video
+    from recording_cleanup import MetadataUpdateError, delete_indexed
+    with video.ARCHIVE_LOCK:
+        with db() as c:
+            row = c.execute('SELECT * FROM segments WHERE id=?', (sid,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Recording not found')
+        try:
+            result, _ = delete_indexed(row)
+        except MetadataUpdateError:
+            raise HTTPException(503, 'File deletion completed but index update failed; retry to reconcile')
+        if result == 'active':
+            raise HTTPException(409, 'Active recording excluded')
+        if result == 'failed':
+            raise HTTPException(503, 'Recording deletion refused or failed')
 
 @app.get('/api/layout', dependencies=[Depends(auth)])
 def layout():
@@ -855,7 +1078,28 @@ async def metrics(request: Request):
     lines += [f'storage_free_bytes {s["free_bytes"] if s["free_bytes"] is not None else "NaN"}', f'recording_bytes_total {s["recording_bytes"]}']
     return '\n'.join(lines) + '\n'
 
+def mount_ui(application: FastAPI, directory: Path):
+    from fastapi.staticfiles import StaticFiles
+    @application.get('/cameras/{camera_id}/live', include_in_schema=False)
+    def single_camera_ui(camera_id: str):
+        return FileResponse(directory / 'index.html')
+
+    @application.get('/overview/', include_in_schema=False)
+    @application.get('/multiview/', include_in_schema=False)
+    @application.get('/archive/', include_in_schema=False)
+    @application.get('/settings/', include_in_schema=False)
+    @application.get('/overview', include_in_schema=False)
+    @application.get('/multiview', include_in_schema=False)
+    @application.get('/archive', include_in_schema=False)
+    @application.get('/settings', include_in_schema=False)
+    @application.get('/account', include_in_schema=False)
+    @application.get('/account/', include_in_schema=False)
+    def application_ui():
+        return FileResponse(directory / 'index.html')
+
+    application.mount('/', StaticFiles(directory=directory, html=True), name='ui')
+
+
 static = Path('/app/static')
 if static.exists():
-    from fastapi.staticfiles import StaticFiles
-    app.mount('/', StaticFiles(directory=static, html=True), name='ui')
+    mount_ui(app, static)

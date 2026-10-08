@@ -5,8 +5,9 @@ services:
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     ports:
-      - "${WEBRTC_PORT:-8889}:8889/tcp"
       - "${WEBRTC_UDP_PORT:-8189}:${WEBRTC_UDP_PORT:-8189}/udp"
+    networks:
+      - media
     environment:
       MTX_WEBRTCLOCALUDPADDRESS: ":${WEBRTC_UDP_PORT:-8189}"
       MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_HOST:-127.0.0.1}
@@ -28,6 +29,7 @@ services:
       DATABASE_PATH: /data/nvr.sqlite3
       DEFAULT_RECORDING_PATH: /recordings
       MEDIAMTX_API: http://mediamtx:9997
+      MEDIAMTX_WEBRTC: http://mediamtx:8889
       MIN_FREE_SPACE_GB: ${MIN_FREE_SPACE_GB:-5}
       SEGMENT_SECONDS: ${SEGMENT_SECONDS:-600}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -35,6 +37,7 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
       DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-en}
       APP_TIMEZONE: ${APP_TIMEZONE:-UTC}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
@@ -45,5 +48,10 @@ services:
       - ${DATA_DIR:-./data}:/data
       - ${DEFAULT_RECORDING_PATH:-./recordings}:/recordings
     ports:
-      - "${NVR_PORT:-8080}:8000/tcp"
+      - "${NVR_BIND:-127.0.0.1}:${NVR_PORT:-8080}:8000/tcp"
+    networks:
+      - media
     stop_grace_period: 45s
+networks:
+  # Only the application and gateway belong here. Do not attach untrusted containers.
+  media:
