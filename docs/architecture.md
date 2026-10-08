@@ -3,7 +3,7 @@
 ```text
 Browser: React UI
   ├── HTTP → FastAPI: configuration, diagnostics, archive metadata/files
-  └── WHEP/WebRTC → MediaMTX: live video
+  └── authenticated WHEP → FastAPI → private MediaMTX; negotiated WebRTC UDP → MediaMTX
 
 Application (one Uvicorn worker)
   ├── SQLite: cameras, layouts, destinations, segment metadata, webhook queue

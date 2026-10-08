@@ -26,6 +26,7 @@ def test_startup_session_login_refresh_and_logout(tmp_path, monkeypatch):
         for path in paths:
             assert client.get(path).status_code == 200
         # A fresh client with the browser's cookie models refresh/reopen.
+        copied = dict(client.cookies)
         with TestClient(main.app) as refreshed:
             refreshed.cookies.update(client.cookies)
             assert refreshed.get('/api/config').status_code == 200
@@ -34,8 +35,64 @@ def test_startup_session_login_refresh_and_logout(tmp_path, monkeypatch):
         for path in paths:
             unauthorized(client.get(path))
         with TestClient(main.app) as refreshed:
-            refreshed.cookies.update(client.cookies)
+            refreshed.cookies.update(copied)
             unauthorized(refreshed.get('/api/config'))
+
+
+def test_expiry_password_change_and_unique_sessions(tmp_path, monkeypatch):
+    main, _ = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
+    with TestClient(main.app) as client:
+        login = {'username': 'admin', 'password': 'secret'}
+        client.post('/api/login', json=login)
+        first = client.cookies['nvr_session']
+        client.post('/api/login', json=login)
+        second = client.cookies['nvr_session']
+        assert first != second
+        unauthorized(client.get('/api/config', headers={'Cookie': f'nvr_session={first}'}))
+        expiry, fingerprint = main.sessions.entries[second]
+        main.sessions.entries[second] = (0, fingerprint)
+        unauthorized(client.get('/api/config'))
+        main.sessions.entries[second] = (expiry, fingerprint)
+        monkeypatch.setattr(main, 'AUTH_PASS', 'new-password')
+        unauthorized(client.get('/api/config'))
+        unauthorized(client.post('/api/login', json=login))
+        assert client.post('/api/login', json={**login, 'password': 'new-password'}).status_code == 200
+        assert client.get('/api/config').status_code == 200
+
+
+@pytest.mark.parametrize('headers', [
+    {'Origin': 'https://attacker.example'}, {'Origin': 'null'},
+    {'Origin': 'https://testserver'}, {'Origin': 'http://['},
+    {'Sec-Fetch-Site': 'cross-site'},
+])
+def test_cross_origin_writes_rejected(tmp_path, monkeypatch, headers):
+    main, _ = setup(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        assert client.post('/api/login', headers=headers, json={'username': 'admin', 'password': 'secret'}).status_code == 403
+        assert not client.cookies
+
+
+def test_secure_cookie_attributes_and_same_origin(tmp_path, monkeypatch):
+    main, _ = setup(tmp_path, monkeypatch)
+    monkeypatch.setenv('COOKIE_SECURE', 'true')
+    with TestClient(main.app, base_url='https://testserver') as client:
+        response = client.post('/api/login', headers={'Origin': 'https://testserver'},
+                               json={'username': 'admin', 'password': 'secret'})
+        for value in ('HttpOnly', 'Secure', 'SameSite=strict', 'Max-Age=86400', 'Path=/'):
+            assert value in response.headers['set-cookie']
+        assert client.get('/api/config').status_code == 200
+
+
+@pytest.mark.parametrize('peer,expected', [('127.0.0.1', 200), ('192.0.2.1', 403)])
+def test_https_scheme_headers_only_from_trusted_proxy(tmp_path, monkeypatch, peer, expected):
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    main, _ = setup(tmp_path, monkeypatch)
+    application = ProxyHeadersMiddleware(main.app, trusted_hosts=['127.0.0.1'])
+    with TestClient(application, client=(peer, 12345)) as client:
+        response = client.post('/api/login', json={'username': 'admin', 'password': 'secret'},
+                               headers={'Origin': 'https://testserver', 'X-Forwarded-Proto': 'https'})
+        assert response.status_code == expected
 
 
 @pytest.mark.parametrize('authorization', [
