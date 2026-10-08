@@ -1,5 +1,7 @@
 # Recording cleanup
 
+[Documentation](README.md) · [Русский](recording-cleanup_RU.md)
+
 Storage settings include **Manage recordings / Storage cleanup**. Choose all
 cameras or check one or more cameras, then select all time or a custom local
 date/time range. Apply filters to update the recording list. Local inputs use
