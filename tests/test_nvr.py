@@ -212,7 +212,8 @@ def test_cleanup_never_deletes_external_files(tmp_path, monkeypatch):
     video.cleanup([], set())
     assert external.read_bytes() == b'private'
     with main.db() as c:
-        assert c.execute('SELECT COUNT(*) FROM segments').fetchone()[0] == 0
+        # Unsafe paths remain indexed for inspection; cleanup never loses track of remaining files.
+        assert c.execute('SELECT COUNT(*) FROM segments').fetchone()[0] == 2
 
 
 def test_index_rejects_symlink_escapes_and_invalid_durations(tmp_path, monkeypatch):
@@ -270,7 +271,8 @@ def test_recording_http_ranges_and_path_protection(tmp_path, monkeypatch):
     main, video = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     with TestClient(main.app) as client:
-        path = video.ROOT / 'sample.mp4'
+        path = video.ROOT / 'default/1/2026/01/01/00/20260101T000000.mp4'
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'0123456789')
         with main.db() as c:
             sid = c.execute('INSERT INTO segments(camera_id,path,started_at,ended_at,size_bytes) VALUES(?,?,?,?,?)', (1, str(path), '2026-01-01', '2026-01-01', 10)).lastrowid
@@ -428,7 +430,8 @@ def test_probe_failures_do_not_delete_valid_footage(tmp_path, monkeypatch):
         raise subprocess.CalledProcessError(1, 'ffprobe', stderr=b'moov atom not found')
     monkeypatch.setattr(video.subprocess, 'run', corrupt)
     video.index_segments(1, root)
-    assert not path.exists()
+    # Unindexed damaged files require inspection; indexing never deletes them.
+    assert path.exists()
 
 
 def test_single_camera_url_serves_ui_for_direct_navigation(tmp_path, monkeypatch):

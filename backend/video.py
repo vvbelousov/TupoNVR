@@ -23,6 +23,24 @@ MTX_RTSP_HOST = os.getenv('MEDIAMTX_RTSP_HOST', 'mediamtx')
 SEGMENT_SECONDS = int(os.getenv('SEGMENT_SECONDS', '600'))
 MIN_FREE = float(os.getenv('MIN_FREE_SPACE_GB', '5')) * 1024**3
 ARCHIVE_LOCK = threading.RLock()
+ACTIVE_DIRECTORIES = set()
+
+
+def set_active_directory(path, active):
+    with ARCHIVE_LOCK:
+        if active:
+            ACTIVE_DIRECTORIES.add(path)
+        else:
+            ACTIVE_DIRECTORIES.discard(path)
+
+
+def is_active_path(path, camera_id, active=()):
+    # Registered before process creation and retained through graceful shutdown.
+    if path.parent in ACTIVE_DIRECTORIES:
+        return True
+    hour = datetime.now(timezone.utc).strftime('%Y/%m/%d/%H')
+    return camera_id in active and path.parent.as_posix().endswith('/' + hour)
+
 
 
 def source_url(row, sub=False):
@@ -255,6 +273,7 @@ class ProcessSupervisor:
     async def run(self, row):
         cid = row['id']
         delay = 2
+        hour = None
         try:
             while self.running:
                 now = datetime.now(timezone.utc)
@@ -281,6 +300,7 @@ class ProcessSupervisor:
                         '-map', '0:v:0', '-an', '-c:v', 'copy', '-f', 'segment',
                         '-segment_time', str(SEGMENT_SECONDS), '-reset_timestamps', '1',
                         '-strftime', '1', '-segment_format', 'mp4', output]
+                await asyncio.to_thread(set_active_directory, hour, True)
                 proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ, 'TZ': 'UTC'})
                 self.procs[cid] = proc
                 drain = asyncio.create_task(self.drain_errors(cid, proc))
@@ -318,6 +338,7 @@ class ProcessSupervisor:
                         except asyncio.TimeoutError:
                             proc.kill()
                             await proc.wait()
+                    await asyncio.to_thread(set_active_directory, hour, False)
                     self.procs.pop(cid, None)
                     await asyncio.gather(drain, progress, return_exceptions=True)
                     if not self.storage or await self.storage.available(row['recording_destination']):
@@ -328,6 +349,8 @@ class ProcessSupervisor:
         except Exception:
             self.errors[cid] = 'Recorder supervisor failed; retrying on next sync'
             log.exception('supervisor_failed camera_id=%d', cid)
+        finally:
+            await asyncio.to_thread(set_active_directory, hour, False)
 
     async def drain_progress(self, cid, proc):
         while True:
@@ -392,12 +415,15 @@ def _index_segments(cid, root, active=False):
         return
     hour = datetime.now(timezone.utc).strftime('%Y/%m/%d/%H')
     current = root / hour
-    open_candidate = max(current.glob('*.mp4'), default=None) if active and current.exists() else None
+    active_directories = set(ACTIVE_DIRECTORIES)
+    if active:
+        active_directories.add(current)
+    open_candidates = {max(folder.glob('*.mp4'), default=None) for folder in active_directories}
     files = root.rglob('*.mp4')
     with db() as c:
         known = {r[0] for r in c.execute('SELECT path FROM segments WHERE camera_id=?', (cid,))}
         for file in files:
-            if file == open_candidate:
+            if file in open_candidates:
                 continue
             if str(file) in known:
                 continue
@@ -418,9 +444,7 @@ def _index_segments(cid, root, active=False):
                 end = start + timedelta(seconds=duration)
             except (ValueError, OverflowError):
                 continue
-            except subprocess.CalledProcessError as error:
-                if b'moov atom not found' in (error.stderr or b'') and stat.st_mtime < datetime.now(timezone.utc).timestamp() - 86400:
-                    file.unlink(missing_ok=True)
+            except subprocess.CalledProcessError:
                 continue
             except (subprocess.SubprocessError, OSError):
                 # Tool failures and storage timeouts do not prove footage is corrupt.
@@ -456,17 +480,17 @@ def _cleanup(rows, active, unavailable):
             if path.is_relative_to(ROOT) and path.relative_to(ROOT).parts[0] in unavailable:
                 continue
             if not safe_archive_path(path):
-                c.execute('DELETE FROM segments WHERE id=?', (s['id'],))
                 continue
             row = by_id.get(s['camera_id'])
             # Never delete the current hour, even if FFmpeg is between segment closes.
-            current_hour = now.strftime('%Y/%m/%d/%H')
-            if s['camera_id'] in active and current_hour in path.as_posix():
+            if is_active_path(path, s['camera_id'], active):
                 continue
             retention = row['retention_days'] if row else 7
             expired = bool(retention and datetime.fromisoformat(s['started_at']) < now - timedelta(days=retention))
             low_space = path.exists() and shutil.disk_usage(path.parent).free < MIN_FREE
             if expired or low_space or not path.exists():
-                if path.exists() and path.is_file() and not path.is_symlink():
-                    path.unlink()
-                c.execute('DELETE FROM segments WHERE id=?', (s['id'],))
+                from recording_cleanup import delete_indexed
+                try:
+                    delete_indexed(s, active)
+                except Exception:
+                    log.exception('retention_delete_failed segment_id=%d', s['id'])

@@ -6,6 +6,7 @@ import {useLanguage} from './i18n';
 import {localClock,localDate,useTimezone,setApplicationTimezone,applicationTimezone,serverNow} from './time';
 import {VideoContainer} from './VideoContainer';
 import {ArchiveClock,synchronize} from './archiveClock';
+import {recordingChangeEvent} from './cleanup';
 import type {Segment} from './archiveClock';
 
 type Camera={id:number;name:string};
@@ -57,6 +58,7 @@ export function Archive({cameras,onError}:{cameras:Camera[];onError:(message:unk
     }catch(e){if(request===metadataRequest.current)fail(e,append?'more':'load')}finally{if(request===metadataRequest.current)setLoading(false)}
   }
   useEffect(()=>{setSegments([]);setTracks({});setMore(false);setDay(null);load();return()=>{metadataRequest.current++}},[date,idsKey,cameraKey,zone]);
+  useEffect(()=>{const changed=()=>{reset();load();setNotice('Recordings changed. Archive refreshed.')};const storageChanged=(event:StorageEvent)=>{if(event.key===recordingChangeEvent)changed()};window.addEventListener(recordingChangeEvent,changed);window.addEventListener('storage',storageChanged);return()=>{window.removeEventListener(recordingChangeEvent,changed);window.removeEventListener('storage',storageChanged)}},[date,idsKey,cameraKey,zone]);
   useEffect(()=>{const available=new Set(cameras.map(c=>c.id));if(ids.some(id=>!available.has(id)))select(ids.filter(id=>available.has(id)))},[cameraKey]);
   useEffect(()=>{const value=session.current?clock.current.position():serverNow();setDate(localDate(value,zone));if(session.current)setTime(localClock(value,zone));setInstants([]);setOccurrence('')},[zone]);
   useEffect(()=>()=>{generation.current++;cancelLookups();clock.current.pause();for(const {video} of players.current.values())video.pause()},[]);
