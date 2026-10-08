@@ -20,6 +20,9 @@ def remove_segment(record, active=()):
     from db import db
     from storage import MARKER_FILE
     path = Path(record['path'])
+    from exports import jobs
+    if path in jobs.pins:
+        return 'active', 0
     try:
         parts = path.relative_to(video.ROOT).parts
     except ValueError:
