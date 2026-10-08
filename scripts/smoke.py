@@ -129,11 +129,21 @@ def smoke(image, uid, gid):
         assert request('/api/time', 'PUT', {'timezone': 'Europe/Moscow'})[0] == 200
         compose_run('restart', 'nvr-app')
         wait_for(lambda: request('/ready')[0] == 200, 'restart readiness')
+        # In-memory sessions deliberately do not survive application restarts.
+        # Keep the old cookie to verify revocation before obtaining a new one.
+        try:
+            request('/api/config')
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
+            assert 'www-authenticate' not in error.headers
+        else:
+            raise AssertionError('Restart must invalidate the previous session')
+        assert request('/api/login', 'POST', {'username': username, 'password': password})[0] == 200
         assert request('/api/config')[1]['timezone'] == 'Europe/Moscow'
         assert request('/api/cameras')[1][0]['id'] == cid
         assert request('/api/storage/destinations')[1][0]['expected_marker'] == marker_id
         assert any(row['id'] == sid for row in request(f'/api/recordings?camera_id={cid}')[1])
-        print('PASS: clean Compose install, health, auth, synthetic RTSP, diagnostics, recording, storage protection/recovery, archive/range/download, and restart persistence')
+        print('PASS: clean Compose install, health, auth, synthetic RTSP, diagnostics, recording, storage protection/recovery, archive/range/download, restart session revocation/relogin, and persistence')
     finally:
         subprocess.run(['docker', 'rm', '-f', source_name], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # Cleanup is confined to this newly created directory/project, never user data.
