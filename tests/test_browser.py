@@ -207,19 +207,22 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 await page.route('http://nvr.test/**', route)
                 await page.goto('http://nvr.test/')
                 await expect(page.locator('html')).to_have_attribute('lang','en')
-                await expect(page.get_by_role('button',name='Overview',exact=True)).to_be_visible()
-                if language=='ru':
-                    await page.get_by_label('Language',exact=True).select_option('ru')
-                await expect(page.locator('html')).to_have_attribute('lang',language)
+                await expect(page.get_by_role('button',name='Sign in',exact=True)).to_be_visible()
+                await expect(page.locator('aside')).to_have_count(0)
                 await expect(page.locator('.time-settings')).to_have_count(0)
                 await page.locator('input[name=user]').fill('admin')
                 await page.locator('input[name=pass]').fill('wrong')
-                await page.get_by_role('button', name=ui('Войти'), exact=True).click()
+                await page.get_by_role('button', name='Sign in', exact=True).click()
                 await expect(page.locator('input[name=pass]')).to_be_visible()
                 await page.locator('input[name=pass]').fill('correct')
-                await page.get_by_role('button', name=ui('Войти'), exact=True).click()
+                await page.get_by_role('button', name='Sign in', exact=True).click()
                 await expect(page.locator('input[name=pass]')).to_have_count(0)
-                await expect(page.locator('.time-settings')).to_have_count(1)
+                await expect(page.locator('.time-settings')).to_have_count(0)
+                await page.get_by_role('link',name='Account').click()
+                if language=='ru':
+                    await page.get_by_label('Language',exact=True).select_option('ru')
+                await expect(page.locator('html')).to_have_attribute('lang',language)
+                await page.get_by_role('button',name='Overview' if language=='en' else 'Обзор',exact=True).click()
                 await expect(page.locator('.stats article').filter(has_text=ui('Пишут')).locator('strong')).to_have_text('1')
                 paused_row = page.locator('section .row').filter(has_text='Camera 2')
                 await expect(paused_row.get_by_label(ui('Подключение'))).to_have_text(ui('В сети'))
@@ -329,11 +332,6 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                 await expect(player).to_have_attribute('src', '/api/recordings/2')
                 await expect(page.locator('.feedback[role=status]').filter(has_text=ui('Пробел в записи: 10 с.'))).to_contain_text(ui('Пробел в записи: 10 с.'))
                 assert adjacent_requests[-1] == ('/api/recordings/1/adjacent', 'next')
-                other = 'ru' if language == 'en' else 'en'
-                await page.locator('.language-switch select').select_option(other)
-                await expect(player).to_have_attribute('src', '/api/recordings/2')
-                await expect(page.get_by_role('status').filter(has_text='Пробел в записи: 10 с.' if other=='ru' else 'Recording gap: 10 s.')).to_contain_text('Пробел в записи: 10 с.' if other=='ru' else 'Recording gap: 10 s.')
-                await page.locator('.language-switch select').select_option(language)
                 await page.get_by_role('button',name='Next →' if language=='en' else 'Следующий →',exact=True).click()
                 await expect(page.get_by_role('status').filter(has_text=ui('Архив этой камеры закончился.'))).to_contain_text(ui('Архив этой камеры закончился.'))
                 await page.get_by_label('Archive date' if language=='en' else 'Дата архива',exact=True).fill('2026-10-05')
@@ -382,6 +380,85 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
 
 @pytest.mark.browser
 @pytest.mark.skipif(os.getenv('NVR_RUN_BROWSER') != '1', reason='Build frontend and set NVR_RUN_BROWSER=1')
+def test_real_session_login_without_browser_basic_challenge(tmp_path, monkeypatch):
+    """Chromium uses the actual HTTP server, auth dependency and session cookie."""
+    import socket
+    import threading
+    import time
+    import uvicorn
+    from playwright.async_api import async_playwright, expect
+    from test_nvr import setup, FakeGateway
+
+    main, _ = setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
+    monkeypatch.setattr(main, 'DEFAULT_LANGUAGE', 'en')
+    monkeypatch.setenv('COOKIE_SECURE', 'false')
+    main.mount_ui(main.app, Path(__file__).resolve().parents[1] / 'frontend' / 'dist')
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        server = uvicorn.Server(uvicorn.Config(main.app, log_level='error'))
+        worker = threading.Thread(target=server.run, kwargs={'sockets':[listener]}, daemon=True)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not server.started and worker.is_alive() and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert server.started, 'Isolated backend did not start'
+            base = f'http://127.0.0.1:{listener.getsockname()[1]}'
+
+            async def exercise():
+                async with async_playwright() as playwright:
+                    browser = await playwright.chromium.launch(executable_path=os.getenv('NVR_CHROME_EXECUTABLE') or None, headless=True, args=['--no-sandbox'])
+                    try:
+                        context = await browser.new_context()
+                        page = await context.new_page()
+                        responses = []
+                        page.on('response', lambda response: responses.append(response))
+                        login = page.get_by_role('heading', name='Sign in to your NVR')
+                        for path in ('/', '/overview', '/multiview', '/archive', '/settings', '/account'):
+                            await page.goto(base + path)
+                            await expect(login).to_be_visible()
+                            await expect(page.locator('aside')).to_have_count(0)
+                        result = await context.request.get(base + '/api/config')
+                        assert result.status == 401
+                        assert 'www-authenticate' not in result.headers
+                        await page.get_by_label('Username', exact=True).fill('admin')
+                        await page.get_by_label('Password', exact=True).fill('secret')
+                        await page.get_by_role('button', name='Sign in', exact=True).click()
+                        await expect(page.get_by_role('button', name='Log out', exact=True)).to_be_visible()
+                        assert (await context.request.get(base + '/api/config')).status == 200
+                        await page.reload()
+                        await expect(page.get_by_role('button', name='Log out', exact=True)).to_be_visible()
+                        await page.get_by_role('button', name='Log out', exact=True).click()
+                        await expect(login).to_be_visible()
+                        assert not any(cookie['name'] == 'nvr_session' for cookie in await context.cookies())
+                        for path in ('/api/config', '/api/cameras'):
+                            result = await context.request.get(base + path)
+                            assert result.status == 401
+                            assert 'www-authenticate' not in result.headers
+                        await page.reload()
+                        await expect(login).to_be_visible()
+                        await page.goto(base + '/archive')
+                        await expect(login).to_be_visible()
+                        # A separate browser context also starts unauthenticated.
+                        fresh = await browser.new_context()
+                        fresh_page = await fresh.new_page()
+                        await fresh_page.goto(base)
+                        await expect(fresh_page.get_by_role('heading', name='Sign in to your NVR')).to_be_visible()
+                        assert any(response.status == 401 for response in responses)
+                        for response in responses:
+                            assert 'www-authenticate' not in await response.all_headers(), response.url
+                    finally:
+                        await browser.close()
+            asyncio.run(exercise())
+        finally:
+            server.should_exit = True
+            worker.join(timeout=10)
+            assert not worker.is_alive(), 'Isolated backend did not stop'
+
+
+@pytest.mark.browser
+@pytest.mark.skipif(os.getenv('NVR_RUN_BROWSER') != '1', reason='Build frontend and set NVR_RUN_BROWSER=1')
 @pytest.mark.parametrize('configured,saved,blocked,expected', [
     ('ru', None, False, 'ru'), ('ru', 'en', False, 'en'), ('en', 'ru', False, 'ru'),
     ('ru', 'invalid', False, 'ru'), ('fr', None, False, 'en'),
@@ -420,6 +497,7 @@ def test_initial_language_precedence_and_fallback(configured, saved, blocked, ex
                 await page.goto('http://nvr.test/')
                 await expect(page.locator('html')).to_have_attribute('lang',expected)
                 await expect(page.get_by_role('heading',name='Обзор' if expected=='ru' else 'Overview',exact=True)).to_be_visible()
+                await page.get_by_role('link',name='Аккаунт' if expected=='ru' else 'Account').click()
                 await page.locator('.language-switch select').select_option('en' if expected=='ru' else 'ru')
                 await expect(page.locator('html')).to_have_attribute('lang','en' if expected=='ru' else 'ru')
             finally:
@@ -540,7 +618,7 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
     def ui(en,ru):
         return ru if language=='ru' else en
     with TestClient(main.app) as client:
-        client.auth=('admin','secret')
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         cameras=[]
         for index in range(4):
             response=client.post('/api/cameras',json={'name':f'Camera {index+1}','rtsp_url':'rtsp://camera/live','recording_enabled':False})
@@ -592,6 +670,7 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                             await handler.fulfill(body=asset.read_bytes(),content_type=mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
                     await page.route('http://nvr.test/**',route)
                     await page.goto('http://nvr.test/')
+                    await page.get_by_role('link',name=ui('Account','Аккаунт')).click()
                     settings=page.locator('.time-settings')
                     await expect(page).to_have_title('TupoNVR')
                     await expect(page.locator('aside h1')).to_have_text('▣ TupoNVR')
@@ -599,6 +678,7 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     await settings.get_by_label(ui('Timezone','Часовой пояс'),exact=True).fill('Europe/Moscow')
                     await settings.get_by_role('button',name=ui('Save timezone','Сохранить часовой пояс'),exact=True).click()
                     await expect(settings).to_contain_text(ui('Timezone saved.','Часовой пояс сохранён.'))
+                    await page.get_by_role('button',name=ui('Overview','Обзор'),exact=True).click()
                     await expect(page.locator('.overview-row').first).to_contain_text('14:33:08')
                     await page.get_by_role('button',name=ui('Archive','Архив'),exact=True).click()
                     from zoneinfo import ZoneInfo
@@ -708,6 +788,7 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     await page.get_by_role('button',name=ui('Select all','Выбрать все'),exact=True).click()
                     await expect(page.locator('.archive-camera')).to_have_count(4)
                     await page.get_by_role('button',name=ui('Overview','Обзор'),exact=True).click()
+                    await page.get_by_role('link',name=ui('Account','Аккаунт')).click()
                     settings=page.locator('.time-settings')
                     await settings.get_by_text(ui('Change timezone','Изменить часовой пояс'),exact=True).click()
                     await settings.get_by_label(ui('Timezone','Часовой пояс'),exact=True).fill('America/New_York')
@@ -854,7 +935,7 @@ window.MediaMTXWebRTCReader=class{constructor(config){window.liveReaders.push(co
                     await expect(page.locator('video')).to_have_count(0)
                 camera_gate=asyncio.Event()
                 await page.goto('http://nvr.test/cameras/1/live')
-                await expect(page.get_by_text('Loading camera…' if language=='en' else 'Загрузка камеры…',exact=True)).to_be_visible()
+                await expect(page.get_by_text('Loading appliance status…' if language=='en' else 'Загрузка состояния устройства…',exact=True)).to_be_visible()
                 camera_gate.set()
                 camera_gate=None
                 await single(1)
@@ -877,6 +958,119 @@ window.MediaMTXWebRTCReader=class{constructor(config){window.liveReaders.push(co
                 await expect(page.locator('video')).to_have_count(0)
                 assert await page.evaluate('window.closedReaders.length')>0
                 assert writes==[]
+            finally:
+                await browser.close()
+    asyncio.run(exercise())
+
+
+@pytest.mark.browser
+@pytest.mark.skipif(os.getenv('NVR_RUN_BROWSER') != '1', reason='Build frontend and set NVR_RUN_BROWSER=1')
+@pytest.mark.parametrize('width', [1280, 390])
+def test_login_account_preferences_and_logout(width):
+    from playwright.async_api import async_playwright, expect
+    root = Path(__file__).resolve().parents[1] / 'frontend' / 'dist'
+
+    async def exercise():
+        logged_in = False
+        zone = 'UTC'
+        submissions = []
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(executable_path=os.getenv('NVR_CHROME_EXECUTABLE') or None, headless=True, args=['--no-sandbox'])
+            try:
+                page = await browser.new_page(viewport={'width':width,'height':900})
+                errors = []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+
+                async def route(handler):
+                    nonlocal logged_in, zone
+                    request = handler.request
+                    url = urlsplit(request.url)
+                    path = url.path
+                    if path == '/api/language':
+                        await handler.fulfill(json={'default_language':'en'})
+                        return
+                    if path == '/api/login':
+                        submissions.append(request.post_data_json)
+                        await asyncio.sleep(.5)
+                        logged_in = request.post_data_json == {'username':'admin','password':'correct'}
+                        await handler.fulfill(status=200 if logged_in else 401, json={'detail':'private backend error','ok':logged_in})
+                        return
+                    if path == '/api/logout':
+                        logged_in = False
+                        await handler.fulfill(status=204)
+                        return
+                    if path.startswith('/api/'):
+                        if not logged_in:
+                            await handler.fulfill(status=401,json={'detail':'Authentication required'})
+                            return
+                        if path == '/api/config':
+                            result = {'webrtc_port':8889,'timezone':zone,'username':'admin'}
+                        elif path == '/api/cameras':
+                            result = []
+                        elif path == '/api/layout':
+                            result = {'columns':2,'tiles':[]}
+                        elif path == '/api/dashboard':
+                            result = {'cameras':0,'online':0,'writing':0,'errors':[],'storage':{'free_bytes':None}}
+                        elif path == '/api/time':
+                            if request.method == 'PUT':
+                                zone = request.post_data_json['timezone']
+                            result = {'timezone':zone,'now':'2026-10-06T12:00:00Z','timezones':['UTC','Europe/Moscow']}
+                        else:
+                            raise AssertionError(path)
+                        await handler.fulfill(json=result)
+                        return
+                    asset = root / path.lstrip('/') if path not in ('/','/account') else root / 'index.html'
+                    await handler.fulfill(body=asset.read_bytes(),content_type=mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
+
+                await page.route('http://nvr.test/**',route)
+                await page.goto('http://nvr.test/account')
+                await expect(page.get_by_role('heading',name='Sign in to your NVR')).to_be_visible()
+                await expect(page.locator('aside')).to_have_count(0)
+                assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                await page.get_by_label('Username',exact=True).fill('admin')
+                await page.get_by_label('Password',exact=True).fill('wrong')
+                await page.get_by_label('Password',exact=True).press('Enter')
+                await expect(page.get_by_role('button',name='Signing in…')).to_be_disabled()
+                # Even synthetic repeated submissions cannot bypass the pending guard.
+                await page.locator('form').evaluate('(form)=>{form.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));form.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}))}')
+                await expect(page.get_by_role('alert')).to_have_text('Invalid credentials')
+                assert len(submissions) == 1
+                await page.get_by_label('Password',exact=True).fill('correct')
+                await page.get_by_label('Password',exact=True).press('Enter')
+                await expect(page.get_by_role('heading',name='Account',exact=True).first).to_be_visible()
+                assert urlsplit(page.url).path == '/account'
+                await expect(page.locator('.account-control')).to_contain_text('admin')
+                await expect(page.get_by_label('Language',exact=True)).to_have_value('en')
+                await expect(page.locator('.time-settings')).to_contain_text('UTC')
+                await page.get_by_label('Language',exact=True).select_option('ru')
+                await expect(page.locator('html')).to_have_attribute('lang','ru')
+                await expect(page.get_by_role('heading',name='Предпочтения')).to_be_visible()
+                await page.reload()
+                await expect(page.get_by_label('Язык',exact=True)).to_have_value('ru')
+                await page.get_by_text('Изменить часовой пояс',exact=True).click()
+                await page.get_by_label('Часовой пояс',exact=True).fill('Europe/Moscow')
+                await page.get_by_role('button',name='Сохранить часовой пояс',exact=True).click()
+                await expect(page.get_by_role('status')).to_contain_text('Часовой пояс сохранён.')
+                await page.reload()
+                await expect(page.locator('.time-settings')).to_contain_text('Europe/Moscow')
+                await page.get_by_label('Язык',exact=True).select_option('en')
+                await page.get_by_role('button',name='Overview',exact=True).click()
+                await expect(page.locator('.language-switch,.time-settings')).to_have_count(0)
+                await expect(page.locator('aside select')).to_have_count(0)
+                account = page.get_by_role('link',name='Account admin')
+                if width == 1280:
+                    bounds = await account.bounding_box()
+                    nav = await page.locator('nav').bounding_box()
+                    assert bounds['y'] > nav['y'] + nav['height'] + 200
+                await account.click()
+                await expect(page.get_by_role('heading',name='Preferences')).to_be_visible()
+                assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                await page.get_by_role('button',name='Log out',exact=True).click()
+                await expect(page.get_by_role('heading',name='Sign in to your NVR')).to_be_visible()
+                await expect(page.locator('aside')).to_have_count(0)
+                await page.reload()
+                await expect(page.get_by_label('Password',exact=True)).to_be_visible()
+                assert not errors, errors
             finally:
                 await browser.close()
     asyncio.run(exercise())

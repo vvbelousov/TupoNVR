@@ -49,15 +49,15 @@ def test_schedule_migration_api_and_legacy_updates(tmp_path, monkeypatch):
     main, _ = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     with TestClient(main.app) as client:
-        credentials = ('admin','secret')
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         payload = {'name':'cam','rtsp_url':'rtsp://cam/live','recording_enabled':False,'recording_schedule':schedule()}
-        created = client.post('/api/cameras', auth=credentials, json=payload)
+        created = client.post('/api/cameras', json=payload)
         assert created.status_code == 201, created.text
         cid = created.json()['id']
         assert created.json()['recording_schedule'] == schedule()
         del payload['recording_schedule']
-        assert client.put(f'/api/cameras/{cid}', auth=credentials, json=payload).json()['recording_schedule'] == schedule()
-        assert client.put(f'/api/cameras/{cid}', auth=credentials, json={**payload,'recording_schedule':None}).json()['recording_schedule'] is None
+        assert client.put(f'/api/cameras/{cid}', json=payload).json()['recording_schedule'] == schedule()
+        assert client.put(f'/api/cameras/{cid}', json={**payload,'recording_schedule':None}).json()['recording_schedule'] is None
     main.init()
 
 
@@ -233,25 +233,26 @@ def test_timeline_seeking_and_cross_midnight_neighbors(tmp_path,monkeypatch):
     # Retention's removal of missing files is exercised separately.
     monkeypatch.setattr(main, 'cleanup', lambda *args: None)
     with TestClient(main.app) as client:
-        auth=('admin','secret')
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
         first=insert_segment(main,1,'2026-10-05T23:50:00+00:00','2026-10-06T00:00:00+00:00')
         second=insert_segment(main,1,'2026-10-06T00:02:00+00:00','2026-10-06T00:12:00+00:00')
         insert_segment(main,2,'2026-10-06T00:00:00+00:00','2026-10-06T00:20:00+00:00')
-        response=client.get('/api/recordings/timeline',auth=auth,params={'camera_id':1,'start':'2026-10-05T23:45:00Z','end':'2026-10-06T00:15:00Z'})
+        response=client.get('/api/recordings/timeline',params={'camera_id':1,'start':'2026-10-05T23:45:00Z','end':'2026-10-06T00:15:00Z'})
         assert response.status_code==200,response.text
         value=response.json()
         assert len(value['intervals'])==2
         assert len(value['gaps'])==3
-        response=client.get('/api/recordings/at',auth=auth,params={'camera_id':1,'time':'2026-10-06T03:05:00+03:00'})
+        response=client.get('/api/recordings/at',params={'camera_id':1,'time':'2026-10-06T03:05:00+03:00'})
         assert response.json()['segment']['id']==second
         assert response.json()['seek_seconds']==180
-        assert client.get('/api/recordings/at',auth=auth,params={'camera_id':1,'time':'2026-10-06T00:01:00Z'}).status_code==404
-        nxt=client.get(f'/api/recordings/{first}/adjacent',auth=auth).json()
+        assert client.get('/api/recordings/at',params={'camera_id':1,'time':'2026-10-06T00:01:00Z'}).status_code==404
+        nxt=client.get(f'/api/recordings/{first}/adjacent').json()
         assert nxt['segment']['id']==second
         assert nxt['gap_seconds']==120
-        assert client.get(f'/api/recordings/{second}/adjacent',auth=auth).json()['segment'] is None
-        assert client.get(f'/api/recordings/{second}/adjacent?direction=previous',auth=auth).json()['segment']['id']==first
-        assert client.get('/api/recordings/timeline',auth=auth,params={'camera_id':1,'start':'2026-10-05T00:00:00','end':'2026-10-06T00:00:00Z'}).status_code==422
+        assert client.get(f'/api/recordings/{second}/adjacent').json()['segment'] is None
+        assert client.get(f'/api/recordings/{second}/adjacent?direction=previous').json()['segment']['id']==first
+        assert client.get('/api/recordings/timeline',params={'camera_id':1,'start':'2026-10-05T00:00:00','end':'2026-10-06T00:00:00Z'}).status_code==422
+        assert client.post('/api/logout').status_code == 204
         assert client.get(f'/api/recordings/{first}/adjacent').status_code==401
 
 
@@ -269,17 +270,17 @@ def test_destination_api_and_metrics(tmp_path,monkeypatch):
     main,_=setup(tmp_path,monkeypatch)
     monkeypatch.setattr(main,'MediaGateway',FakeGateway)
     with TestClient(main.app) as client:
-        auth=('admin','secret')
-        response=client.put('/api/storage/destinations/nas',auth=auth,json={'expected_marker':'disk1'})
+        assert client.post('/api/login', json={'username':'admin','password':'secret'}).status_code == 200
+        response=client.put('/api/storage/destinations/nas',json={'expected_marker':'disk1'})
         assert response.status_code==200,response.text
         assert response.json()['ready'] is False
         assert not (main.ROOT/'nas').exists()
         (main.ROOT/'nas').mkdir()
         (main.ROOT/'nas/.nvr-storage-id').write_text('disk1')
-        assert client.put('/api/storage/destinations/nas',auth=auth,json={'expected_marker':'disk1'}).json()['ready']
-        assert 'storage_destination_ready{destination="nas"} 1' in client.get('/metrics',auth=auth).text
-        assert client.get('/api/notifications/status',auth=auth).json()['enabled'] is False
-        assert client.put('/api/storage/destinations/nas',auth=auth,json={'expected_marker':'../escape'}).status_code==422
+        assert client.put('/api/storage/destinations/nas',json={'expected_marker':'disk1'}).json()['ready']
+        assert 'storage_destination_ready{destination="nas"} 1' in client.get('/metrics').text
+        assert client.get('/api/notifications/status').json()['enabled'] is False
+        assert client.put('/api/storage/destinations/nas',json={'expected_marker':'../escape'}).status_code==422
 
 
 def test_storage_probe_spawn_failure_fails_closed(tmp_path, monkeypatch):

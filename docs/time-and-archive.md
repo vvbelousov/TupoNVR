@@ -12,7 +12,7 @@
 
 Timezone aliases are normalized using the server timezone database’s link metadata (for example, US/Eastern → America/New_York). The installation has one explicit IANA timezone, shared by every user/browser and recording schedule. The default is `APP_TIMEZONE=UTC`. This environment value initializes an installation that has no saved preference; it does not override a timezone saved through the UI.
 
-**Overview → Appliance time → Change timezone** provides a searchable native datalist of zones from the server's timezone database, the configured zone, and current local server time. Saving applies immediately to schedule expectations. Other open clients pick up the setting through existing configuration polling, normally within ten seconds.
+**Account → Preferences → Change timezone** provides a searchable native datalist of zones from the server's timezone database, the configured zone, and current local server time. Saving applies immediately to schedule expectations. Other open clients pick up the setting through existing configuration polling, normally within ten seconds.
 
 The preference lives in `settings.json` beside `DATABASE_PATH`, normally `/data/settings.json` on the existing data volume. Writes use a private temporary file, file/directory fsync, an atomic rename, and an in-process lock. No table, column, index, migration, new dependency, or infrastructure is introduced. `SETTINGS_PATH` can override the file location for direct deployments. Preserve this file with the data directory. Manual edits require an application restart. Invalid configuration fails startup rather than silently changing recording times.
 
@@ -38,7 +38,7 @@ A 250 ms controller tick applies common play/pause/rate and corrects drift only 
 
 At a camera's segment end, batch lookup resolves the file covering the current master instant, including any overlap offset. For a gap, the response caches the next segment's absolute start; the camera rejoins when the clock reaches it, without polling during that gap. Different cameras transition independently. Metadata lookups time out after ten seconds; obsolete requests are cancelled on session changes. Lookup failures retry after five seconds, with errors local to the affected camera. Static absence of future footage does not trigger repeated requests; use Refresh or seek again to discover newly indexed footage.
 
-Single-camera previous/next, download, pagination and the automatic-next preference remain available. With automatic next disabled, single-camera playback pauses at the segment boundary. Shared playback stops when all selected cameras have exhausted their indexed footage. Fullscreen and language changes preserve the clock.
+Single-camera previous/next, download, pagination and the automatic-next preference remain available. With automatic next disabled, single-camera playback pauses at the segment boundary. Shared playback stops when all selected cameras have exhausted their indexed footage. Fullscreen preserves the clock. Language is changed on Account; leaving Archive follows the existing route behavior and ends its playback.
 
 ## API additions
 

@@ -73,13 +73,14 @@ Retention: число дней 1–3650; пустое значение озна�
 
 ## Интерфейс и API
 
+- **Аккаунт:** `/account`, язык, часовой пояс устройства, настроенный логин и выход. Кнопка внизу боковой панели (рядом с названием приложения на мобильных). `POST /api/logout` удаляет cookie сессии; сохранённые браузером Basic credentials не авторизуют запросы приложения. Пароль задаётся через окружение; смены пароля в интерфейсе нет.
 - **Обзор:** число камер, онлайн, запись, свободное место, ошибки. «Смотреть» открывает `/cameras/<id>/live` с основным потоком одной камеры. Обновление страницы и навигация браузера сохраняют выбор; настройки мультиэкрана независимы.
 - **Камеры:** добавить, изменить, отключить, проверить, удалить. Пустой пароль или RTSP URL при редактировании сохраняет старое значение; substream удаляется отдельным переключателем. В списке URL скрывает путь и параметры, которые могут содержать секреты.
 - **Мультиэкран:** добавить камеру, перетащить заголовок, изменить размер за угол, выбрать `contain`/`cover`; отдельный просмотр открывает основной поток.
 - **Архив:** дата и время в часовом поясе устройства; одна, несколько или все камеры на общей шкале времени с пробелами, синхронное воспроизведение, скорость, фокус, соседние сегменты и скачивание. Переходы между файлами и возврат после пробелов выполняются отдельно для каждой камеры.
 - **Хранилище:** доступность, возможность записи, резерв места и защита каждого destination; состояние очереди webhook.
 
-OpenAPI: `/docs`; основные маршруты: `GET/POST /api/cameras`, `GET/PUT/DELETE /api/cameras/{id}`, `POST /api/cameras/{id}/start|stop|check`, `GET /api/cameras/{id}/status`, `GET /api/recordings?camera_id=&date=YYYY-MM-DD&limit=&offset=`, `GET /api/recordings/{id}`, `GET /api/recordings/{id}/download`, `DELETE /api/recordings/{id}`, `GET/PUT /api/layout`, `GET /api/dashboard`, `GET /api/storage/status`, `GET /api/storage/destinations`, `PUT /api/storage/destinations/{name}`, `GET /api/notifications/status`, `GET /api/recordings/timeline?camera_id=&start=&end=`, `GET /api/recordings/at?camera_id=&time=`, `GET /api/recordings/{id}/adjacent?direction=next|previous`, `GET /health`, `GET /ready`, `GET /metrics`. Если включена авторизация, `POST /api/login` создаёт HttpOnly session cookie; для CLI поддерживается Basic auth.
+OpenAPI: `/docs`; основные маршруты: `GET/POST /api/cameras`, `GET/PUT/DELETE /api/cameras/{id}`, `POST /api/cameras/{id}/start|stop|check`, `GET /api/cameras/{id}/status`, `GET /api/recordings?camera_id=&date=YYYY-MM-DD&limit=&offset=`, `GET /api/recordings/{id}`, `GET /api/recordings/{id}/download`, `DELETE /api/recordings/{id}`, `GET/PUT /api/layout`, `GET /api/dashboard`, `GET /api/storage/status`, `GET /api/storage/destinations`, `PUT /api/storage/destinations/{name}`, `GET /api/notifications/status`, `GET /api/recordings/timeline?camera_id=&start=&end=`, `GET /api/recordings/at?camera_id=&time=`, `GET /api/recordings/{id}/adjacent?direction=next|previous`, `GET /health`, `GET /ready`, `GET /metrics`. Если включена авторизация, `POST /api/login` создаёт HttpOnly session cookie; CLI использует тот же endpoint входа и cookie сессии. Защищённые API без сессии возвращают 401 без HTTP Basic challenge.
 
 ## Диагностика
 
@@ -157,7 +158,7 @@ Integration тесту нужен свободный localhost:8554; остал�
 
 ## Недельное расписание
 
-В редакторе камеры включите **Ограничить время записи**, настройте часовой пояс устройства на странице **Обзор** и задайте 1–14 окон с днями недели и временем. По умолчанию расписания нет — запись постоянная. `enabled` и `recording_enabled` остаются главными выключателями; расписание не включает выключенную камеру и не ограничивает live viewing.
+В редакторе камеры включите **Ограничить время записи**, настройте часовой пояс устройства в разделе **Аккаунт** и задайте 1–14 окон с днями недели и временем. По умолчанию расписания нет — запись постоянная. `enabled` и `recording_enabled` остаются главными выключателями; расписание не включает выключенную камеру и не ограничивает live viewing.
 
 API принимает, например:
 
@@ -192,16 +193,16 @@ Timeline API требует timestamps с `Z` или timezone offset, диапа
 
 The interface supports English and Russian. English is the default, regardless of the browser language. Set `DEFAULT_LANGUAGE=en` or `DEFAULT_LANGUAGE=ru` in `.env` and recreate the application container (`docker compose up -d --build`) to change the initial language. Other values fail startup with a clear configuration error.
 
-The **Language / Язык** selector is available before login and on every page. Its selection takes effect immediately and is remembered in this browser's local storage; it overrides the server default. Switching languages preserves forms, layout, archive selection and playback. Dates are formatted for the selected language in the installation timezone. If browser storage is disabled, switching still works for the current visit; the next visit uses the server default. Remove the `nvr-language` local-storage key to use the server default again.
+The **Language / Язык** selector is in **Account / Аккаунт → Preferences / Предпочтения** (`/account`), available from the bottom of the sidebar and beside the product name on mobile. Its selection takes effect immediately and is remembered in this browser's local storage; it overrides the server default. The login page uses the saved browser preference or server default. Dates are formatted for the selected language in the installation timezone. If browser storage is disabled, switching still works for the current visit; the next visit uses the server default. Remove the `nvr-language` local-storage key to use the server default again.
 
 `GET /api/language` returns only `{"default_language":"en"}` (or `ru`) and is available without authentication so that login can use the configured language. The normal application configuration and camera/storage APIs retain their authentication requirements.
 
-Интерфейс поддерживает английский и русский; по умолчанию используется английский. `DEFAULT_LANGUAGE=ru` задаёт русский для первого посещения. Переключатель **Language / Язык** доступен до входа и сохраняет выбор в этом браузере. Этот выбор имеет приоритет над серверной настройкой. Переключение не сбрасывает формы, раскладку или просмотр архива; время архива использует часовой пояс устройства.
+Интерфейс поддерживает английский и русский; по умолчанию используется английский. `DEFAULT_LANGUAGE=ru` задаёт русский для первого посещения. Переключатель **Language / Язык** доступен в разделе **Аккаунт → Предпочтения** и сохраняет выбор в этом браузере. Этот выбор имеет приоритет над серверной настройкой. Страница входа использует сохранённый язык или серверную настройку; время архива использует часовой пояс устройства.
 
 
 ## Installation timezone and synchronized archive
 
-Set the installation timezone on **Overview → Appliance time**. `APP_TIMEZONE=UTC` is the initial default; a UI-saved preference overrides it and persists as `/data/settings.json` on the existing data volume. There is no database migration. Existing recording timestamps, filenames, logs and webhook payloads remain UTC. **Existing per-camera schedule timezone fields are retained for compatibility but every schedule now uses the installation timezone:** configure it before relying on schedules after upgrading.
+Set the installation timezone on **Account → Preferences → Change timezone**. `APP_TIMEZONE=UTC` is the initial default; a UI-saved preference overrides it and persists as `/data/settings.json` on the existing data volume. There is no database migration. Existing recording timestamps, filenames, logs and webhook payloads remain UTC. **Existing per-camera schedule timezone fields are retained for compatibility but every schedule now uses the installation timezone:** configure it before relying on schedules after upgrading.
 
 Archive supports one, several or all cameras on one absolute playback clock, with aligned availability tracks, shared play/pause/seek/speed, automatic independent segment transitions, gap recovery, and individual-camera fullscreen. Local archive dates use their true DST-aware day bounds; repeated local times require an offset choice and nonexistent times produce an error. Browser timezone does not decide the query instant. No transcoding or media composition is added.
 
