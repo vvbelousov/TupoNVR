@@ -855,7 +855,15 @@ async def metrics(request: Request):
     lines += [f'storage_free_bytes {s["free_bytes"] if s["free_bytes"] is not None else "NaN"}', f'recording_bytes_total {s["recording_bytes"]}']
     return '\n'.join(lines) + '\n'
 
+def mount_ui(application: FastAPI, directory: Path):
+    from fastapi.staticfiles import StaticFiles
+    @application.get('/cameras/{camera_id}/live', include_in_schema=False)
+    def single_camera_ui(camera_id: str):
+        return FileResponse(directory / 'index.html')
+
+    application.mount('/', StaticFiles(directory=directory, html=True), name='ui')
+
+
 static = Path('/app/static')
 if static.exists():
-    from fastapi.staticfiles import StaticFiles
-    app.mount('/', StaticFiles(directory=static, html=True), name='ui')
+    mount_ui(app, static)

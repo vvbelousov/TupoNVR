@@ -427,3 +427,24 @@ def test_probe_failures_do_not_delete_valid_footage(tmp_path, monkeypatch):
     monkeypatch.setattr(video.subprocess, 'run', corrupt)
     video.index_segments(1, root)
     assert not path.exists()
+
+
+def test_single_camera_url_serves_ui_for_direct_navigation(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    main, _ = setup(tmp_path, monkeypatch)
+    assets = tmp_path / 'ui'
+    assets.mkdir()
+    (assets / 'index.html').write_text('<html>camera UI</html>')
+    (assets / 'reader.js').write_text('// player')
+    application = FastAPI()
+    main.mount_ui(application, assets)
+    with TestClient(application) as client:
+        for camera_id in ['42', '999', 'invalid']:
+            response = client.get(f'/cameras/{camera_id}/live')
+            assert response.status_code == 200
+            assert response.headers['content-type'].startswith('text/html')
+            assert response.text == '<html>camera UI</html>'
+        assert client.get('/').text == '<html>camera UI</html>'
+        assert client.get('/reader.js').text == '// player'
+        assert client.get('/api/unknown').status_code == 404
+        assert client.get('/missing.js').status_code == 404

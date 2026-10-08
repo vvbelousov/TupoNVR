@@ -147,10 +147,10 @@ To recover, keep the application stopped, restore the complete matching backup w
 
 ## Interface and API
 
-- **Overview:** camera counts, connectivity, recording progress, free space, errors, and installation timezone settings.
+- **Overview:** camera counts, connectivity, recording progress, free space, errors, and installation timezone settings. Watch opens `/cameras/<id>/live` for that camera’s main stream. Refresh and browser navigation preserve the camera; saved Multiview selections stay independent.
 - **Cameras:** add, edit, disable, check, and delete cameras. Blank passwords or RTSP URLs preserve saved values during editing; a separate switch removes the substream. List URLs hide paths and query parameters that may contain secrets.
 - **Multiview:** add live cameras, drag tile headers, resize using the corner, and choose `contain`/`cover`. Individual viewing uses the main stream.
-- **Archive:** investigate one, several, or all cameras at a shared local date/time. Aligned availability tracks expose gaps; shared controls provide play/pause, seek, speed, and focus. Segment transitions happen independently. Single-camera previous/next, automatic-next, pagination, and downloads remain available.
+- **Archive:** investigate one, several, or all cameras at a shared local date/time. Aligned availability tracks expose gaps; shared controls provide play/pause, seek, and speed. Each camera can independently enter fullscreen. Segment transitions happen independently. Single-camera previous/next, automatic-next, pagination, and downloads remain available.
 - **Storage:** destination availability, write access, free-space reserves, missing-mount protection, and webhook delivery status.
 
 OpenAPI is available at `/docs`. Main routes include:
@@ -301,7 +301,7 @@ Configure the installation timezone in **Overview → Appliance time**. `APP_TIM
 
 **Upgrade note:** existing per-camera schedule timezone fields are retained for compatibility, but every schedule now follows the installation timezone. Configure it before relying on schedules after upgrading.
 
-Archive supports one, several, or all cameras on one absolute playback clock. Selection is temporary and separate from saved live Multiview layouts. Aligned availability tracks show gaps. Shared play/pause/seek and native 0.5×/1×/2×/4× speeds apply to active cameras; focus enlarges one camera without losing synchronization.
+Archive supports one, several, or all cameras on one absolute playback clock. Selection is temporary and separate from saved live Multiview layouts. Aligned availability tracks show gaps. Shared play/pause/seek and native 0.5×/1×/2×/4× speeds apply to active cameras; fullscreen expands an individual camera without losing synchronization.
 
 The master clock uses monotonic browser time and UTC segment metadata. Independent seek offsets align files with different start times; drift above 750 ms is corrected. Each camera transitions across segments independently. Missing footage does not stop other cameras; a camera rejoins when its next known segment starts. Refresh updates metadata and active lookups to discover newly indexed footage. Shared playback stops when all selected cameras have exhausted their indexed footage.
 
