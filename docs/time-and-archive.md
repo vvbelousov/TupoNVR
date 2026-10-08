@@ -1,5 +1,7 @@
 # Installation time and synchronized archive investigation
 
+[Documentation](README.md) · [Русский](time-and-archive_RU.md)
+
 ## Timestamp audit and domain model
 
 - SQLite `segments.started_at` and `ended_at` are TEXT containing aware UTC ISO 8601 timestamps (`+00:00`). The recorder/indexer writes normalized UTC, and archive queries normalize offset-bearing inputs into the same representation before comparison. No SQLite local-time interpretation is involved.
@@ -53,7 +55,7 @@ All these endpoints use existing authentication:
 - `POST /api/recordings/timelines`: `{ "camera_ids": [1,2], "start": "...Z", "end": "...Z" }`; merged intervals/gaps grouped by camera. One range query, maximum 31 days/20,000 segments; shorten the range if exceeded.
 - `POST /api/recordings/resolve`: `{ "camera_ids": [1,2], "time": "...Z" }`; current segment, seek seconds and next segment per camera. One HTTP request and one SQL statement with indexed camera/time lookups. Missing cameras/footage produce empty choices rather than failing the whole request.
 
-Existing single-camera timeline/at/adjacent/file APIs remain compatible. Metadata responses omit paths and credentials. Naive absolute timestamps are rejected. Serving existing MP4s preserves byte-range support.
+Existing single-camera timeline/at/adjacent/file APIs remain compatible. Metadata responses omit paths and credentials. Naive absolute timestamps are rejected. Serving existing MP4s preserves byte-range support. The single-camera timeline is limited to 5000 segments; the UI list loads 200 at a time with **Load more**.
 
 ## Limits and verification
 

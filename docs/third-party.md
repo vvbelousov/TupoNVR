@@ -1,5 +1,7 @@
 # Third-party software
 
+[Documentation](README.md) · [Русский](third-party_RU.md)
+
 Apache-2.0 covers TupoNVR's own code. Dependencies and container components retain their own licenses; the image's OCI license label describes the application, not every included package.
 
 - The vendored MediaMTX WebRTC reader retains its MIT text at `frontend/public/MEDIAMTX-LICENSE.txt`, also shipped as `/MEDIAMTX-LICENSE.txt` by the web server.
