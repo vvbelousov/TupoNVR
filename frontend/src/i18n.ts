@@ -9,6 +9,22 @@ const listeners = new Set<()=>void>();
 
 // English is the source language; one small catalog keeps the UI dependency-free.
 const ru:Record<string,string> = {
+  "Storage blocked. Open Storage to check mounts, permissions and free space.":"Запись заблокирована хранилищем. Проверьте подключение диска, права и свободное место на странице хранилища.",
+  "Recorder error. Use Check to verify connectivity and codec; check Storage for writable space.":"Ошибка записи. Нажмите «Проверить» для проверки подключения и кодека; проверьте права и свободное место в хранилище.",
+  "Camera has no usable video stream. Select a video RTSP stream and try H.264.":"У камеры нет пригодного видеопотока. Выберите RTSP-поток с видео и попробуйте H.264.",
+  "Add the camera RTSP URL and credentials.":"Добавьте RTSP URL камеры и учётные данные.",
+  "Use Check to verify connectivity.":"Нажмите «Проверить» для проверки подключения.",
+  "Keep Recording enabled and confirm Writing in Overview. Check Storage if recording is blocked.":"Оставьте запись включённой и проверьте статус «Пишет» в обзоре. Если запись заблокирована, проверьте хранилище.",
+  "Use Watch to open live video.":"Нажмите «Смотреть» для прямого эфира.",
+  "Use Archive to access recorded footage after the first segment closes.":"Откройте «Архив» для просмотра записей после завершения первого сегмента.",
+  "Recording is enabled by default, with 7-day retention and a free-space reserve.":"По умолчанию запись включена: хранение 7 дней с резервом свободного места.",
+  "Live stream unavailable. Use Check on Cameras. If the camera is readable, check browser codec support, WebRTC host settings and the UDP firewall. Reconnecting…":"Прямой эфир недоступен. Нажмите «Проверить» на странице камер. Если камера доступна, проверьте поддержку кодека браузером, настройки адреса WebRTC и UDP в межсетевом экране. Переподключение…",
+  "Camera authentication failed. Check the username and password.":"Ошибка авторизации камеры. Проверьте логин и пароль.",
+  "Camera timed out. Check its address, firewall and network route.":"Камера не ответила вовремя. Проверьте адрес, межсетевой экран и сетевой маршрут.",
+  "Camera unavailable. Check power, address, RTSP port and network access.":"Камера недоступна. Проверьте питание, адрес, порт RTSP и доступ по сети.",
+  "RTSP stream not found. Check the camera stream path.":"RTSP-поток не найден. Проверьте путь потока камеры.",
+  "Cannot read video. Check the RTSP stream path and camera codec; try H.264.":"Не удалось прочитать видео. Проверьте путь RTSP и кодек камеры; попробуйте H.264.",
+  "Camera check unavailable. Install FFprobe or restore the application image.":"Проверка камеры недоступна. Установите FFprobe или восстановите образ приложения.",
   "Cannot allocate temporary export storage":"Не удалось выделить временное место для экспорта",
   "Cannot start export worker":"Не удалось запустить экспорт",
   "Export service is shutting down":"Сервис экспорта останавливается",

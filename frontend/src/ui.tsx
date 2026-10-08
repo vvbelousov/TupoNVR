@@ -5,7 +5,7 @@ export function Feedback({children,tone='neutral'}:{children:ReactNode;tone?:'ne
   return <div className={`feedback ${tone}`} role={tone==='bad'?'alert':'status'}>{children}</div>;
 }
 export function EmptyState({title,children,action}:{title:string;children:ReactNode;action?:ReactNode}){
-  return <div className="empty-state"><strong>{title}</strong><p>{children}</p>{action}</div>;
+  return <div className="empty-state"><strong>{title}</strong><div className="empty-state-description">{children}</div>{action}</div>;
 }
 export function Modal({title,closeLabel,onClose,children}:{title:string;closeLabel:string;onClose:()=>void;children:ReactNode}){
   const dialog=useRef<HTMLDialogElement>(null);

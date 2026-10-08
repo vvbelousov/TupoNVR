@@ -17,7 +17,7 @@ export function Stream({id,sub=false,header,headerActions}:{id:number;sub?:boole
     const reader=new window.MediaMTXWebRTCReader({
       url:`${location.origin}/api/media/cam_${id}${sub?'_sub':''}/whep`,
       onTrack:e=>{if(!active)return;if(video.current){video.current.srcObject=e.streams[0];video.current.play().catch(()=>{if(!active)return;setIssue('Live playback failed. Check browser codec support.');setConnecting(false)})}setIssue('');setConnecting(false)},
-      onError:()=>{if(!active)return;setConnecting(false);setIssue('Stream unavailable. Reconnecting…')}
+      onError:()=>{if(!active)return;setConnecting(false);setIssue('Live stream unavailable. Use Check on Cameras. If the camera is readable, check browser codec support, WebRTC host settings and the UDP firewall. Reconnecting…')}
     });
     return ()=>{active=false;reader.close();if(video.current)video.current.srcObject=null};
   },[id,sub]);

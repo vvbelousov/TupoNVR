@@ -68,10 +68,11 @@ class CameraInput(BaseModel):
 
     @field_validator('rtsp_url', 'substream_url')
     @classmethod
-    def valid_url(cls, value):
+    def valid_url(cls, value, info):
         if value is None:
             return value
-        if value == '':
+        if value == '' and (info.field_name == 'substream_url' or cls is CameraUpdate):
+            # Legacy updates use an empty main URL to preserve the saved source.
             return value
         try:
             u = urlsplit(value)

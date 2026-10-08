@@ -44,7 +44,7 @@ Use a Linux host with **Docker Engine and Docker Compose v2**, network access to
    cp .env.example .env
    ```
 
-2. Edit `.env`: set `WEBRTC_HOST` to the host's LAN IP when viewing from another device. Set `DEFAULT_RECORDING_PATH` to your host recording directory, or keep `./recordings` for local storage. Mount external storage first. Set both `AUTH_USERNAME` and `AUTH_PASSWORD` if you want application login; both are empty by default.
+2. For LAN access, set `NVR_BIND=0.0.0.0` and both `AUTH_USERNAME` and `AUTH_PASSWORD` in `.env`. Keep `WEBRTC_HOST` blank for the Linux LAN deployment below. Keep `./recordings` for local storage, or set `DEFAULT_RECORDING_PATH` to a host directory. Mount external storage first. Localhost-only use can keep the bind and authentication defaults.
 
 3. Set the image in `.env`, choosing `0.1.0`, `latest`, or another published tag from [Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags). Pin a version for predictable updates; `latest` follows the current stable release.
 
@@ -55,14 +55,18 @@ Use a Linux host with **Docker Engine and Docker Compose v2**, network access to
    Pull and start the containers:
 
    ```sh
-   docker compose up -d --no-build --pull always
+   docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build --pull always
    ```
 
-4. Open `http://<host-address>:8080`, go to **Cameras**, and add the camera's main RTSP URL and credentials. Cameras and recording are enabled by default; recording starts when storage is ready. Use **Check**, then verify recording progress in **Overview**. Configure your timezone in **Account → Preferences** before using schedules or local archive times.
+   This Linux Docker Engine option requires Compose **2.24.4+**. It uses MediaMTX’s native host-interface discovery, so a typical LAN needs no `WEBRTC_HOST`. For the unreleased changes in this checkout, build them with `NVR_IMAGE=tuponvr:local docker compose -f docker-compose.yml -f compose.lan.yml up -d --build` instead of pulling an older release.
 
-The application binds to localhost by default. For LAN viewing set `NVR_BIND=0.0.0.0`, `WEBRTC_HOST` to the host LAN IP, and both authentication values. Allow **TCP 8080 and UDP 8189** through the firewall. Login protects API, archive and browser live viewing. Keep MediaMTX TCP ports private. See [SECURITY.md](SECURITY.md) and [migration notes](docs/security-hardening.md).
+4. Open `http://<host-address>:8080`, go to **Cameras**, and add the camera's main RTSP URL and credentials. Cameras and recording are enabled by default; recording starts when storage is ready. Use **Check**, then verify recording progress in **Overview**. Use **Watch** to open live video and **Archive** to find recorded footage after the first recording segment closes (normally 10 minutes, or at the hour boundary). Configure your timezone in **Account → Preferences** before using schedules or local archive times.
+
+The application binds to localhost by default. The original bridge deployment remains available with `docker compose up -d --no-build --pull always`; it requires `WEBRTC_HOST` to be the host LAN address for remote viewers. Linux LAN mode binds MediaMTX API, RTSP and signaling to loopback; these host ports (9997, 8554, 8889) must be free. Both containers share the host network, so local processes are part of the trust boundary. Allow **TCP 8080 and UDP 8189** through the firewall. Login protects API, archive and browser live viewing. Keep MediaMTX TCP ports private. See [SECURITY.md](SECURITY.md) and [migration notes](docs/security-hardening.md).
 
 The command pulls the selected image without building locally. See [image deployment and source builds](docs/operations.md#published-image-deployment) for alternatives.
+
+See [installation and troubleshooting](docs/installation.md) for storage initialization, network alternatives and actionable camera diagnostics.
 
 ## Screenshots and demo
 
@@ -89,14 +93,14 @@ Run exactly one application worker to avoid duplicate recorders. See [component 
 
 ## Configuration and storage
 
-Copy [.env.example](.env.example) to `.env`; it contains all Compose settings. Apply environment changes with `docker compose up -d --no-build --pull always` when using a published image.
+Copy [.env.example](.env.example) to `.env`; it contains all Compose settings. When using Linux LAN mode, include `-f docker-compose.yml -f compose.lan.yml` in every Compose command, including updates and shutdown. Apply environment changes with `docker compose up -d --no-build --pull always` when using a published image.
 
 | Variable | Default in `.env.example` | Purpose |
 |---|---|---|
 | `NVR_PORT` | `8080` | Host application TCP port |
 | `NVR_BIND` | `127.0.0.1` | Application bind address; set `0.0.0.0` for LAN access |
 | `WEBRTC_UDP_PORT` | `8189` | WebRTC media UDP port |
-| `WEBRTC_HOST` | `127.0.0.1` | Host address advertised to browsers for ICE |
+| `WEBRTC_HOST` | blank | Linux LAN mode: native host-interface detection. Bridge mode: falls back to `127.0.0.1`. Explicit comma-separated IPs/DNS names add ICE candidates in both modes. |
 | `DATA_DIR` | `./data` | Host directory mounted at `/data`: SQLite and timezone settings |
 | `DEFAULT_RECORDING_PATH` | `./recordings` | Host directory mounted at `/recordings` |
 | `SEGMENT_SECONDS` | `600` | Target segment length in seconds; boundaries depend on keyframes |

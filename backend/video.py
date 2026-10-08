@@ -26,6 +26,20 @@ ARCHIVE_LOCK = threading.RLock()
 ACTIVE_DIRECTORIES = set()
 
 
+def probe_failure(reason):
+    """Classify locally; never return or log camera-supplied error text."""
+    reason = str(reason).lower()
+    if any(part in reason for part in ('401', '403', 'unauthorized', 'authorization failed')):
+        return 'authentication_failed', 'Camera authentication failed. Check the username and password.'
+    if any(part in reason for part in ('timed out', 'timeout')):
+        return 'timeout', 'Camera timed out. Check its address, firewall and network route.'
+    if any(part in reason for part in ('connection refused', 'no route', 'unreachable', 'resolve', 'not known')):
+        return 'unavailable', 'Camera unavailable. Check power, address, RTSP port and network access.'
+    if '404' in reason or 'not found' in reason:
+        return 'source_not_found', 'RTSP stream not found. Check the camera stream path.'
+    return 'unreadable_media', 'Cannot read video. Check the RTSP stream path and camera codec; try H.264.'
+
+
 def set_active_directory(path, active):
     with ARCHIVE_LOCK:
         if active:
@@ -197,21 +211,33 @@ class MediaGateway:
         async with self.check_limit:
             cid = row['id']
             proc = None
-            result = {'ok': False, 'video': None, 'message': 'Cannot read video; check source credentials, connectivity and codec'}
+            code, message = probe_failure('')
+            result = {'ok': False, 'video': None, 'code': code, 'message': message}
             try:
                 # Probe the configured source itself, not an on-demand relay or
                 # a recorder. No shell, transcoding, stderr capture, or URL logs.
                 proc = await asyncio.create_subprocess_exec('ffprobe', '-v', 'quiet', '-rtsp_transport', 'tcp', '-timeout', '8000000',
                     '-analyzeduration', '1000000', '-probesize', '262144',
-                    '-show_entries', 'stream=codec_type,codec_name,width,height,avg_frame_rate', '-of', 'json',
+                    '-show_error', '-show_entries', 'stream=codec_type,codec_name,width,height,avg_frame_rate', '-of', 'json',
                     source_url(row), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 output, _ = await asyncio.wait_for(proc.communicate(), 10)
+                metadata = json.loads(output)
                 if proc.returncode:
+                    code, message = probe_failure(metadata.get('error', {}).get('string', ''))
+                    result.update(code=code, message=message)
                     raise ValueError('No stream')
-                stream = next(s for s in json.loads(output)['streams'] if s['codec_type'] == 'video' and s.get('codec_name') and s.get('width', 0) > 0 and s.get('height', 0) > 0)
+                stream = next((s for s in metadata.get('streams', []) if s['codec_type'] == 'video' and s.get('codec_name') and s.get('width', 0) > 0 and s.get('height', 0) > 0), None)
+                if stream is None:
+                    result.update(code='unsupported_media', message='Camera has no usable video stream. Select a video RTSP stream and try H.264.')
+                    raise ValueError('No usable video')
                 video = {key: stream.get(key) for key in ('codec_name', 'width', 'height', 'avg_frame_rate')}
                 result = {'ok': True, 'video': video, 'message': 'Video stream readable',
                           'browser_compatibility': 'likely' if video['codec_name'] == 'h264' else 'browser_dependent'}
+            except asyncio.TimeoutError:
+                code, message = probe_failure('timeout')
+                result.update(code=code, message=message)
+            except FileNotFoundError:
+                result.update(code='probe_unavailable', message='Camera check unavailable. Install FFprobe or restore the application image.')
             except Exception:
                 pass  # Never expose ffprobe output or camera-supplied metadata.
             finally:
@@ -280,7 +306,7 @@ class ProcessSupervisor:
                 hour_name = now.strftime('%Y/%m/%d/%H')
                 if self.storage:
                     if not await self.storage.prepare(row, hour_name):
-                        self.errors[cid] = 'Storage unavailable, not writable, or below reserve'
+                        self.errors[cid] = 'Storage blocked. Open Storage to check mounts, permissions and free space.'
                         await asyncio.sleep(5)
                         continue
                     dest = ROOT / row['recording_destination'] / str(cid)
@@ -397,7 +423,7 @@ class ProcessSupervisor:
             if not line:
                 break
             # FFmpeg reads only a local URL; avoid logging untrusted camera-supplied metadata.
-            self.errors[cid] = 'Recorder error; inspect connectivity and codec'
+            self.errors[cid] = 'Recorder error. Use Check to verify connectivity and codec; check Storage for writable space.'
             log.warning('recorder_error camera_id=%d', cid)
 
 
