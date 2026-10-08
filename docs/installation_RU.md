@@ -41,7 +41,7 @@ NVR_IMAGE=tuponvr:local docker compose up -d --build
 
 ## Запуск готового образа
 
-Используйте файлы того же проверенного релиза, что и выбранный образ: `docker-compose.yml`, `mediamtx.yml`, `.env.example` и нужные overlays. В примере задано `NVR_IMAGE=vvbelousov/tuponvr:0.1.0`; проверьте наличие в [тегах Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags) и выберите фиксированную версию или digest. Если образ недоступен, соберите исходники. Тег `latest`, если опубликован, может меняться при обновлениях.
+Используйте файлы того же проверенного релиза, что и выбранный образ: `docker-compose.yml`, `mediamtx.yml`, `.env.example` и нужные overlays. В примере задано `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`; проверьте наличие в [тегах Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags) и выберите фиксированную версию или digest. Если образ недоступен, соберите исходники. Тег `latest`, если опубликован, может меняться при обновлениях.
 
 Linux LAN:
 

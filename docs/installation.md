@@ -41,7 +41,7 @@ The inline value overrides the published image reference in `.env`. For subseque
 
 ## Image deployment
 
-Use deployment files from the same reviewed release as the selected image: `docker-compose.yml`, `mediamtx.yml`, `.env.example`, and any overlays you use. The example sets `NVR_IMAGE=vvbelousov/tuponvr:0.1.0`; check [Docker Hub tags](https://hub.docker.com/r/vvbelousov/tuponvr/tags) for availability and select a fixed version or digest. If unavailable, build from source. A `latest` tag, when published, can change across updates.
+Use deployment files from the same reviewed release as the selected image: `docker-compose.yml`, `mediamtx.yml`, `.env.example`, and any overlays you use. The example sets `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`; check [Docker Hub tags](https://hub.docker.com/r/vvbelousov/tuponvr/tags) for availability and select a fixed version or digest. If unavailable, build from source. A `latest` tag, when published, can change across updates.
 
 Linux LAN:
 

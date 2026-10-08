@@ -20,7 +20,7 @@ Copy [`.env.example`](../.env.example) to `.env`; these are Compose settings. Ap
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `DEFAULT_LANGUAGE` | `en` | Initial interface language: `en` or `ru` |
 | `APP_TIMEZONE` | `UTC` | Initial installation timezone; a UI-saved preference takes precedence |
-| `NVR_IMAGE` | `vvbelousov/tuponvr:0.1.0` | Published application image/version; blank uses the local source-build image |
+| `NVR_IMAGE` | `vvbelousov/tuponvr:0.2.0` | Published application image/version; blank uses the local source-build image |
 | `NVR_UID`, `NVR_GID` | `0`, `0` | Optional numeric container identity; non-root requires writable host directories |
 | `WEBHOOK_URL` | empty | Generic HTTP(S) notification endpoint; empty disables notifications |
 | `WEBHOOK_TOKEN` | empty | Optional Bearer token |
