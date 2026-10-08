@@ -13,6 +13,8 @@ srt: no
 moq: no
 paths: {}
 authMethod: internal
+# Trusted service network only: API, RTSP and WHEP HTTP must never be published.
+# Browser signaling is authenticated by the application's /api/media proxy.
 authInternalUsers:
   - user: any
     ips: []

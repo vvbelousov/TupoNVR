@@ -59,7 +59,7 @@ Use a Linux host with **Docker Engine and Docker Compose v2**, network access to
 
 4. Open `http://<host-address>:8080`, go to **Cameras**, and add the camera's main RTSP URL and credentials. Cameras and recording are enabled by default; recording starts when storage is ready. Use **Check**, then verify recording progress in **Overview**. Configure your timezone in **Account → Preferences** before using schedules or local archive times.
 
-For viewing on the host itself, `WEBRTC_HOST=127.0.0.1` is sufficient. Other devices need access to **TCP 8080/8889 and UDP 8189** on the host; adjust your LAN firewall. Optional login protects the UI, API, and archive files, **but not MediaMTX's direct live-view ports**. Restrict those ports to trusted clients. See [SECURITY.md](SECURITY.md).
+The application binds to localhost by default. For LAN viewing set `NVR_BIND=0.0.0.0`, `WEBRTC_HOST` to the host LAN IP, and both authentication values. Allow **TCP 8080 and UDP 8189** through the firewall. Login protects API, archive and browser live viewing. Keep MediaMTX TCP ports private. See [SECURITY.md](SECURITY.md) and [migration notes](docs/security-hardening.md).
 
 The command pulls the selected image without building locally. See [image deployment and source builds](docs/operations.md#published-image-deployment) for alternatives.
 
@@ -93,7 +93,7 @@ Copy [.env.example](.env.example) to `.env`; it contains all Compose settings. A
 | Variable | Default in `.env.example` | Purpose |
 |---|---|---|
 | `NVR_PORT` | `8080` | Host application TCP port |
-| `WEBRTC_PORT` | `8889` | Host WHEP signaling TCP port |
+| `NVR_BIND` | `127.0.0.1` | Application bind address; set `0.0.0.0` for LAN access |
 | `WEBRTC_UDP_PORT` | `8189` | WebRTC media UDP port |
 | `WEBRTC_HOST` | `127.0.0.1` | Host address advertised to browsers for ICE |
 | `DATA_DIR` | `./data` | Host directory mounted at `/data`: SQLite and timezone settings |
@@ -135,7 +135,7 @@ TupoNVR is not intended to grow into an enterprise video management system (VMS)
 - No transcoding: browser codec support determines live/archive playback. H.265 support varies; a camera being Online does not guarantee browser playback.
 - Archive synchronization is practical rather than frame-accurate. Timestamp precision, camera latency, bandwidth, and browser decoder capacity limit accuracy and camera count; no capacity benchmark is claimed.
 - Sudden power loss can leave incomplete MP4 files. There is no automatic repair or backup; files missing the MP4 `moov` atom can be deleted by the indexer after 24 hours.
-- Login does not protect direct MediaMTX live view. HTTPS requires HTTPS on the WHEP endpoint too; the application is intended for a trusted LAN.
+- MediaMTX TCP endpoints must stay private. Login protects browser signaling through the application; use HTTPS and secure cookies outside a trusted LAN.
 - NAS mounting and recovery are host responsibilities; storage checks cannot fix hung kernel I/O or guarantee the current segment survives a mount loss.
 - Native ARM execution and long-running real-camera/NAS soak testing remain unverified in the documented release preparation. ARM CI is configured; verify target hardware before advertising support.
 

@@ -76,7 +76,7 @@ Individual segments can be deleted through the API. SQLite uses WAL, and the wor
 | Variable | Default in `.env.example` | Purpose |
 |---|---|---|
 | `NVR_PORT` | `8080` | Application port on the host |
-| `WEBRTC_PORT` | `8889` | WHEP HTTP signaling port |
+| `NVR_BIND` | `127.0.0.1` | Application bind address; use `0.0.0.0` for authenticated LAN access |
 | `WEBRTC_UDP_PORT` | `8189` | WebRTC media UDP port |
 | `WEBRTC_HOST` | `127.0.0.1` | Host IP/DNS for ICE; use the LAN IP for other devices |
 | `DATA_DIR` | `./data` | Host directory for SQLite and persisted settings |
@@ -99,7 +99,7 @@ Browser requests that change state validate Origin. A reverse proxy must preserv
 
 The application runs one Uvicorn process (`--workers 1`); a second worker could start duplicate FFmpeg recorders. The database contains camera passwords in plaintext: protect `DATA_DIR` and backups. SQLite files are created with permissions `0600`. Structured backend events omit private URLs and passwords, and Uvicorn access logging is disabled.
 
-Do not expose MediaMTX and the NVR directly to the internet. **Optional authentication protects the UI, API, and archive files, but not MediaMTX's direct WebRTC port.** Restrict 8889/8189 with a firewall or provide a separately protected reverse proxy when access must be limited. With an HTTPS UI proxy, configure HTTPS for the WHEP endpoint as well; browsers otherwise block mixed content.
+Use authentication for shared deployments and HTTPS with secure cookies outside a trusted LAN. Browser signaling uses `/api/media` on the application origin. Keep MediaMTX TCP 8889, 8554 and 9997 private; Compose does not publish them. See [security and migration](security-hardening.md).
 
 ### Container permissions
 
@@ -126,7 +126,7 @@ To recover, keep the application stopped, restore the complete matching backup w
 
 ## Interface and API
 
-- **Account:** language, installation timezone, configured username and logout. `POST /api/logout` clears the browser session cookie; cached HTTP Basic credentials do not authenticate application requests. Account passwords are configured through the environment, with no UI password-change flow.
+- **Account:** language, installation timezone, configured username and logout. `POST /api/logout` revokes the server session and deletes its active WebRTC resources, then clears the browser session cookie; cached HTTP Basic credentials do not authenticate application requests. Account passwords are configured through the environment, with no UI password-change flow.
 - **Overview:** camera counts, connectivity, recording progress, free space and errors. Watch opens `/cameras/<id>/live` for that camera’s main stream. Refresh and browser navigation preserve the camera; saved Multiview selections stay independent.
 - **Cameras:** add, edit, disable, check, and delete cameras. Blank passwords or RTSP URLs preserve saved values during editing; a separate switch removes the substream. List URLs hide paths and query parameters that may contain secrets.
 - **Multiview:** add live cameras, drag tile headers, resize using the corner, and choose `contain`/`cover`. Individual viewing uses the main stream.
@@ -157,10 +157,10 @@ curl http://localhost:8080/health
 curl http://localhost:8080/ready
 ```
 
-- **Online but no video:** check the camera codec. H.264 has the widest browser support; H.265 support varies. Check `WEBRTC_HOST`, UDP 8189, TCP 8889, and the browser console.
+- **Online but no video:** check the camera codec. H.264 has the widest browser support; H.265 support varies. Check `WEBRTC_HOST`, UDP 8189, the application TCP port, and the browser console.
 - **No recording:** check mounts, directory permissions, free space, and whether MediaMTX can access the main RTSP path. Status reports FFmpeg errors without exposing private URLs.
 - **Empty archive:** the segment currently being written is not indexed. Wait for completion and the next scan (up to five minutes), or stop recording cleanly. MP4 files that fail indexing checks are excluded; files missing the MP4 `moov` atom can be removed after 24 hours.
-- **Changed WebRTC port:** recreate the Compose services. The UI reads the port from backend runtime configuration.
+- **Changed WebRTC UDP port:** recreate Compose services. HTTP signaling uses the application origin; `WEBRTC_PORT` is obsolete.
 - **Unstable RTSP:** MediaMTX reconnects and FFmpeg restarts with backoff. There is one FFmpeg process per recording camera.
 
 ## Development and validation
@@ -195,7 +195,7 @@ Chromium tests exercise the built React assets in English and Russian, including
 
 There is no audio recording, detection, PTZ, ONVIF, multi-user management, background transcoding, or native mobile app. The API does not calculate FPS/bitrate; it reads `bytes_received` from MediaMTX without decoding video. MP4 files damaged by sudden power loss are not repaired automatically. Back up SQLite, persisted settings, and recordings independently.
 
-The direct WebRTC endpoint is accessible within the LAN without UI authentication. Retention controls database and recording growth, but unlimited retention requires external free-space monitoring. Archive synchronization is practical rather than frame-accurate: second-resolution recording starts, camera latency, codec support, bandwidth, and browser decoder capacity limit accuracy and large selections.
+Browser signaling requires application authentication when configured; direct MediaMTX TCP access must remain private. Retention controls database and recording growth, but unlimited retention requires external free-space monitoring. Archive synchronization is practical rather than frame-accurate: second-resolution recording starts, camera latency, codec support, bandwidth, and browser decoder capacity limit accuracy and large selections.
 
 ## Recording health and camera checks
 

@@ -3,8 +3,6 @@ import json
 import logging
 import os
 import secrets
-import hmac
-import hashlib
 import time
 import shutil
 import re
@@ -24,6 +22,7 @@ from storage import StorageMonitor, NAME_PATTERN
 from notifications import Webhooks
 from timeconfig import get_timezone, save_timezone, validate_zone, valid_timezones, day_range, resolve_local
 from version import VERSION
+from security import Sessions, MediaProxy
 
 class JsonLog(logging.Formatter):
     def format(self, record):
@@ -41,11 +40,7 @@ if DEFAULT_LANGUAGE not in ('en', 'ru'):
     raise RuntimeError('DEFAULT_LANGUAGE must be en or ru')
 if bool(AUTH_USER) != bool(AUTH_PASS):
     raise RuntimeError('Set both AUTH_USERNAME and AUTH_PASSWORD, or neither')
-SESSION_KEY = hashlib.sha256((AUTH_USER + '\0' + AUTH_PASS).encode()).digest()
-
-def token(expiry):
-    message = str(expiry)
-    return message + '.' + hmac.new(SESSION_KEY, message.encode(), hashlib.sha256).hexdigest()
+sessions = Sessions()
 
 class LoginInput(BaseModel):
     username: str
@@ -54,13 +49,7 @@ class LoginInput(BaseModel):
 async def auth(request: Request):
     if not AUTH_USER and not AUTH_PASS:
         return
-    cookie = request.cookies.get('nvr_session', '')
-    try:
-        stamp = cookie.split('.')[0]
-        cookie_ok = int(stamp) > time.time() and secrets.compare_digest(cookie, token(int(stamp)))
-    except (ValueError, IndexError, TypeError):
-        cookie_ok = False
-    if not cookie_ok:
+    if not sessions.valid(request.cookies.get('nvr_session', ''), AUTH_USER, AUTH_PASS):
         raise HTTPException(401, 'Authentication required')
 
 class CameraInput(BaseModel):
@@ -167,6 +156,11 @@ def one(cid):
 
 @asynccontextmanager
 async def lifespan(app):
+    if not AUTH_USER:
+        log.warning('Authentication disabled: all reachable application and media routes are public')
+    elif os.getenv('COOKIE_SECURE', 'false').lower() != 'true':
+        log.warning('Secure cookies disabled: use HTTPS and COOKIE_SECURE=true outside a trusted LAN')
+    log.warning('MediaMTX HTTP/API/RTSP must remain private; publishing them bypasses application authentication')
     get_timezone()  # Fail startup clearly for invalid/corrupt time configuration.
     init()
     ROOT.mkdir(parents=True, exist_ok=True)
@@ -175,13 +169,30 @@ async def lifespan(app):
     supervisor = ProcessSupervisor(gateway, storage_monitor)
     hooks = Webhooks()
     app.state.gateway = gateway
+    app.state.media = MediaProxy(os.getenv('MEDIAMTX_WEBRTC', 'http://mediamtx:8889'), sessions,
+                                lambda: (AUTH_USER, AUTH_PASS))
+    app.state.media.ready = False
     app.state.supervisor = supervisor
     app.state.storage = storage_monitor
     app.state.webhooks = hooks
     app.state.reconcile_lock = asyncio.Lock()
     app.state.protection_lock = asyncio.Lock()
     async def maintenance():
+        orphan_cleanup_pending = True
         while True:
+            await app.state.media.reap()
+            if orphan_cleanup_pending:
+                try:
+                    while True:
+                        existing = await gateway.call('GET', '/v3/webrtcsessions/list?itemsPerPage=1000')
+                        if not existing.get('items'):
+                            break
+                        for session in existing['items']:
+                            await gateway.call('POST', f"/v3/webrtcsessions/kick/{session['id']}")
+                    orphan_cleanup_pending = False
+                    app.state.media.ready = True
+                except Exception:
+                    log.warning('media_session_cleanup_pending')
             try:
                 await reconcile_state(app)
             except Exception:
@@ -219,6 +230,7 @@ async def lifespan(app):
         await storage_monitor.close()
         await hooks.close()
         await gateway.close()
+        await app.state.media.close()
 
 app = FastAPI(title='TupoNVR', version=VERSION, lifespan=lifespan)
 
@@ -232,11 +244,21 @@ async def validation_error(request: Request, exc: RequestValidationError):
 @app.middleware('http')
 async def same_origin_writes(request: Request, call_next):
     origin = request.headers.get('origin')
-    if origin and request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
-        origin_url = urlsplit(origin)
-        if origin_url.scheme not in ('http', 'https') or origin_url.netloc != request.url.netloc:
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        if request.headers.get('sec-fetch-site') == 'cross-site':
             return Response(status_code=403)
-    return await call_next(request)
+        if origin:
+            try:
+                origin_url = urlsplit(origin)
+                allowed = origin_url.scheme == request.url.scheme and origin_url.netloc == request.url.netloc
+            except ValueError:
+                allowed = False
+            if not allowed:
+                return Response(status_code=403)
+    response = await call_next(request)
+    if request.url.path.startswith('/api/') or request.url.path == '/metrics':
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 def destination_markers():
     with db() as c:
@@ -304,18 +326,37 @@ async def invalidate_diagnostics(gateway, cid):
     getattr(gateway, 'checks', {}).pop(cid, None)
 
 @app.post('/api/login')
-def login(body: LoginInput, response: Response):
+async def login(body: LoginInput, request: Request, response: Response):
     if not AUTH_USER and not AUTH_PASS:
         return {'ok': True}
     if not secrets.compare_digest(body.username.encode(), AUTH_USER.encode()) or not secrets.compare_digest(body.password.encode(), AUTH_PASS.encode()):
         raise HTTPException(401, 'Invalid credentials')
-    response.set_cookie('nvr_session', token(int(time.time()) + 86400), httponly=True, samesite='strict', secure=os.getenv('COOKIE_SECURE','false').lower() == 'true', max_age=86400)
+    sessions.revoke(request.cookies.get('nvr_session', ''))
+    response.set_cookie('nvr_session', sessions.create(AUTH_USER, AUTH_PASS), httponly=True, samesite='strict', secure=os.getenv('COOKIE_SECURE','false').lower() == 'true', max_age=sessions.lifetime)
+    response.headers['Cache-Control'] = 'no-store'
     return {'ok': True}
 
 @app.post('/api/logout', status_code=204)
-def logout(response: Response):
+async def logout(request: Request, response: Response):
+    sessions.revoke(request.cookies.get('nvr_session', ''))
+    if hasattr(request.app.state, 'media'):
+        await request.app.state.media.reap()
     response.delete_cookie('nvr_session', httponly=True, samesite='strict',
                            secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true')
+
+
+@app.options('/api/media/{stream}/whep', dependencies=[Depends(auth)])
+@app.post('/api/media/{stream}/whep', dependencies=[Depends(auth)])
+@app.patch('/api/media/{stream}/whep/{resource}', dependencies=[Depends(auth)])
+@app.delete('/api/media/{stream}/whep/{resource}', dependencies=[Depends(auth)])
+async def media(request: Request, stream: str, resource: str | None = None):
+    if not re.fullmatch(r'cam_[1-9][0-9]*(?:_sub)?', stream):
+        raise HTTPException(404, 'Stream not found')
+    if resource is not None and not re.fullmatch(r'[0-9a-fA-F-]{36}', resource):
+        raise HTTPException(404, 'Media session not found')
+    path = f'/{stream}/whep' + (f'/{resource}' if resource else '')
+    owner = request.cookies.get('nvr_session', '') if AUTH_USER else ''
+    return await request.app.state.media.forward(request, path, owner)
 
 
 @app.get('/health')

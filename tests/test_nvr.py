@@ -338,11 +338,12 @@ def test_cross_origin_writes_are_rejected_and_proxy_https_is_supported(tmp_path,
     main, _ = setup(tmp_path, monkeypatch)
     monkeypatch.setattr(main, 'MediaGateway', FakeGateway)
     credentials = {'username': 'admin', 'password': 'secret'}
-    with TestClient(main.app) as client:
+    with TestClient(main.app, base_url='https://testserver') as client:
         assert client.post('/api/login', json=credentials, headers={'Origin': 'https://attacker.example'}).status_code == 403
         assert client.post('/api/login', json=credentials, headers={'Origin': 'null'}).status_code == 403
         assert client.post('/api/login', json=credentials, headers={'Origin': 'https://testserver'}).status_code == 200
-        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'http://testserver'}).status_code == 200
+        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'http://testserver'}).status_code == 403
+        assert client.put('/api/layout', json={'columns': 2, 'tiles': []}, headers={'Origin': 'https://testserver'}).status_code == 200
 
 
 def test_stop_returns_saved_state_during_gateway_outage(tmp_path, monkeypatch):
