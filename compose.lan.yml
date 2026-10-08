@@ -1,0 +1,29 @@
+# Linux Docker Engine, Compose >= 2.24.4. Native MediaMTX interface discovery.
+# docker compose -f docker-compose.yml -f compose.lan.yml up -d --build
+services:
+  mediamtx:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    environment:
+      MTX_APIADDRESS: 127.0.0.1:9997
+      MTX_RTSPADDRESS: 127.0.0.1:8554
+      MTX_WEBRTCADDRESS: 127.0.0.1:8889
+      # Blank gathers host interfaces; explicit WEBRTC_HOST remains supported.
+      MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_HOST:-}
+  nvr-app:
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    environment:
+      MEDIAMTX_API: http://127.0.0.1:9997
+      MEDIAMTX_WEBRTC: http://127.0.0.1:8889
+      MEDIAMTX_RTSP_HOST: 127.0.0.1
+      NVR_BIND: ${NVR_BIND:-127.0.0.1}
+      NVR_PORT: ${NVR_PORT:-8080}
+    command:
+      - sh
+      - -c
+      - exec uvicorn main:app --host "$${NVR_BIND}" --port "$${NVR_PORT}" --workers 1 --no-access-log
+    healthcheck:
+      test: [CMD, python, -c, "import os, urllib.request; host=os.environ['NVR_BIND']; host='127.0.0.1' if host=='0.0.0.0' else '[::1]' if host=='::' else '['+host+']' if ':' in host else host; urllib.request.urlopen('http://' + host + ':' + os.environ['NVR_PORT'] + '/health', timeout=3).close()"]

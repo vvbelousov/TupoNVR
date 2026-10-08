@@ -78,7 +78,7 @@ Individual segments can be deleted through the API. SQLite uses WAL, and the wor
 | `NVR_PORT` | `8080` | Application port on the host |
 | `NVR_BIND` | `127.0.0.1` | Application bind address; use `0.0.0.0` for authenticated LAN access |
 | `WEBRTC_UDP_PORT` | `8189` | WebRTC media UDP port |
-| `WEBRTC_HOST` | `127.0.0.1` | Host IP/DNS for ICE; use the LAN IP for other devices |
+| `WEBRTC_HOST` | blank | LAN host-network mode discovers interfaces; bridge mode defaults to localhost. Explicit IPs/DNS names remain supported. |
 | `DATA_DIR` | `./data` | Host directory for SQLite and persisted settings |
 | `DEFAULT_RECORDING_PATH` | `./recordings` | Host recording root |
 | `SEGMENT_SECONDS` | `600` | Target segment duration in seconds |
@@ -105,7 +105,7 @@ Use authentication for shared deployments and HTTPS with secure cookies outside 
 
 Root remains the default for compatibility with existing bind mounts; it is not required by FastAPI, FFmpeg, or MediaMTX API calls. To run the application as a non-root user, create the data/recording directories first with ownership matching `NVR_UID`/`NVR_GID`, then set those numeric IDs in `.env`. Existing root-owned databases, settings, and markers may need an intentional ownership change before switching. Do not loosen permissions globally or change NAS ownership blindly.
 
-The application uses a normal bridge network, drops `NET_RAW`, and prevents new privileges. It does not need privileged mode, host networking, or a Docker socket. Writable data/recording mounts and temporary-file space remain necessary. The image healthcheck checks `/health`; `/ready` separately verifies MediaMTX connectivity.
+The default deployment uses a bridge network, drops `NET_RAW`, and prevents new privileges. The optional Linux LAN overlay uses the host network for native WebRTC interface discovery. It does not need privileged mode, host networking, or a Docker socket. Writable data/recording mounts and temporary-file space remain necessary. The image healthcheck checks `/health`; `/ready` separately verifies MediaMTX connectivity.
 
 ## Updating, backup, and recovery
 
@@ -290,3 +290,5 @@ Local archive dates use their actual DST-aware bounds and include segments overl
 Timeline requests require timestamps with `Z` or an explicit offset and a range of at most 31 days. The single-camera endpoint allows up to 5000 segments; the batch endpoint allows up to 20,000. Shorten the range if exceeded. Lists load 200 records at a time with **Load more**. Batch timeline and playback lookup APIs use existing SQLite metadata and camera/time indexes, without new services or per-pixel requests.
 
 See [the time model, configuration, API details, synchronization strategy, and limitations](time-and-archive.md).
+
+For Linux native WebRTC interface discovery, see [the LAN deployment option](installation.md). Include `-f docker-compose.yml -f compose.lan.yml` in each Compose command when using it.

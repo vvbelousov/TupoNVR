@@ -525,7 +525,10 @@ def test_empty_states_camera_creation_and_pending_storage(language):
                 async def route(handler):
                     request=handler.request
                     path=urlsplit(request.url).path
-                    if path=='/api/language':
+                    if path=='/reader.js':
+                        await handler.fulfill(content_type='application/javascript', body='window.MediaMTXWebRTCReader=class {constructor(config){config.onError("private camera error")} close(){}};')
+                        return
+                    elif path=='/api/language':
                         result={'default_language':language}
                     elif path=='/api/cameras':
                         if request.method=='POST':
@@ -541,6 +544,8 @@ def test_empty_states_camera_creation_and_pending_storage(language):
                         result={'cameras':len(cameras),'online':0,'writing':0,'errors':[],'storage':{'free_bytes':None}}
                     elif path=='/api/layout':
                         result={'columns':2,'tiles':[]}
+                    elif path=='/api/cameras/1/check':
+                        result={'ok':False,'code':'authentication_failed','message':'Camera authentication failed. Check the username and password.'}
                     elif path=='/api/cameras/1/status':
                         result={'connectivity_state':'UNKNOWN','recording_health':'PAUSED','recording_expected':False}
                     elif path=='/api/recordings/cleanup/query':
@@ -560,16 +565,19 @@ def test_empty_states_camera_creation_and_pending_storage(language):
                     elif path.startswith('/api/recordings'):
                         result=[]
                     else:
-                        asset=root/path.lstrip('/') if path!='/' else root/'index.html'
+                        asset=root/'index.html' if request.resource_type=='document' else root/path.lstrip('/')
                         await handler.fulfill(body=asset.read_bytes(),content_type=mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
                         return
                     await handler.fulfill(json=result)
                 await page.route('http://nvr.test/**',route)
                 await page.goto('http://nvr.test/')
                 await expect(page.get_by_text('No cameras configured' if language=='en' else 'Камеры не настроены',exact=True)).to_be_visible()
+                await expect(page.locator('.onboarding-steps li')).to_have_count(5)
+                await expect(page.locator('p .onboarding-steps')).to_have_count(0)
                 await page.get_by_role('button',name='Multiview' if language=='en' else 'Мультиэкран',exact=True).click()
                 await expect(page.get_by_text('No cameras in this view' if language=='en' else 'На экране нет камер',exact=True)).to_be_visible()
-                await page.get_by_role('button',name='Cameras' if language=='en' else 'Камеры',exact=True).click()
+                await page.get_by_role('button',name='Overview' if language=='en' else 'Обзор',exact=True).click()
+                await page.get_by_role('button',name='Add camera' if language=='en' else 'Добавить камеру',exact=True).click()
                 await expect(page.locator('.advanced-settings')).not_to_have_attribute('open','')
                 await page.get_by_label('Name' if language=='en' else 'Название',exact=True).fill('Front door')
                 await page.get_by_label('RTSP URL',exact=True).fill('rtsp://camera/live')
@@ -578,6 +586,13 @@ def test_empty_states_camera_creation_and_pending_storage(language):
                 await expect(page.get_by_text('Camera saved.' if language=='en' else 'Камера сохранена.',exact=True)).to_be_visible()
                 assert saved[0]['name']=='Front door' and saved[0]['recording_enabled'] is False
                 await expect(page.locator('.camera')).to_contain_text('Recording paused' if language=='en' else 'Запись приостановлена')
+                await page.locator('.camera').get_by_role('button',name='Check' if language=='en' else 'Проверить',exact=True).click()
+                await expect(page.locator('.diagnostic')).to_contain_text('Camera authentication failed' if language=='en' else 'Ошибка авторизации камеры')
+                await page.locator('.camera').get_by_role('button',name='Watch' if language=='en' else 'Смотреть',exact=True).click()
+                await expect(page.locator('.stream-error')).to_contain_text('UDP')
+                assert 'private camera error' not in await page.locator('main').inner_text()
+                await page.locator('.archive-control').click()
+                await expect(page.get_by_text('No recordings for this date' if language=='en' else 'За эту дату записей нет',exact=True)).to_be_visible()
                 await page.get_by_role('button',name='Storage' if language=='en' else 'Хранилище',exact=True).click()
                 await expect(page.locator('.destination>.state').first).to_have_class('state neutral')
                 await expect(page.get_by_text('Not protected' if language=='en' else 'Без защиты',exact=True)).to_have_class('state neutral')

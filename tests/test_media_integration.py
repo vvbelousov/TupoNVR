@@ -16,7 +16,8 @@ from test_nvr import setup
 @pytest.mark.integration
 @pytest.mark.skipif(not os.getenv('NVR_MEDIAMTX_BIN') or os.getenv('NVR_RUN_BROWSER') != '1',
                     reason='Set NVR_MEDIAMTX_BIN and NVR_RUN_BROWSER=1 for real WebRTC playback')
-def test_authenticated_webrtc_and_logout(tmp_path, monkeypatch):
+@pytest.mark.parametrize('address_mode', ['interfaces', 'override'])
+def test_authenticated_webrtc_and_logout(tmp_path, monkeypatch, address_mode):
     from playwright.sync_api import sync_playwright
 
     def port():
@@ -34,7 +35,8 @@ def test_authenticated_webrtc_and_logout(tmp_path, monkeypatch):
     # A synthetic publisher replaces a real camera in this disposable fixture only.
     config = config.replace('paths: {}', 'paths:\n  source: {}')
     config = config.replace('      - action: read', '      - action: publish\n      - action: read')
-    config += '\nwebrtcAdditionalHosts: [127.0.0.1]\n'
+    if address_mode == 'override':
+        config = config.replace('webrtcAdditionalHosts: []', 'webrtcAdditionalHosts: [127.0.0.1]')
     config_path = tmp_path / 'mediamtx.yml'
     config_path.write_text(config)
     monkeypatch.setenv('MEDIAMTX_API', f'http://127.0.0.1:{api_port}')

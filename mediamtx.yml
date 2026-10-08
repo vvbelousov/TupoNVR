@@ -9,6 +9,10 @@ hls: no
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+# Native discovery sees container interfaces in bridge mode and host interfaces
+# with compose.lan.yml. Explicit WEBRTC_HOST adds candidates in either mode.
+webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts: []
 srt: no
 moq: no
 paths: {}
