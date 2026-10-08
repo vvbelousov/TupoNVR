@@ -11,7 +11,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements-dev.txt
 npm ci --prefix frontend
 cp .env.example .env
-docker compose up -d --build
+NVR_IMAGE= docker compose up -d --build
 ```
 
 Use disposable data and synthetic cameras while developing. Never submit `.env`, databases, recordings, unredacted screenshots, tokens, or private camera URLs.
