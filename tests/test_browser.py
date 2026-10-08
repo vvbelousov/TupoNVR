@@ -168,6 +168,8 @@ def test_ui_schedules_storage_diagnostics_and_sequential_archive(tmp_path, langu
                         upcoming=next((record for record in (first,second) if datetime.fromisoformat(record['started_at'])>target),None)
                         values[str(cid)]={'segment':chosen,'next_segment':upcoming,'seek_seconds':(target-datetime.fromisoformat(chosen['started_at'])).total_seconds() if chosen else 0}
                     result={'time':body['time'],'cameras':values}
+                elif path == '/api/recordings/cleanup/query':
+                    result = {'total':0,'recordings':[]}
                 elif path == '/api/recordings':
                     offset = int(query.get('offset', ['0'])[0])
                     archive_offsets.append(offset)
@@ -539,6 +541,8 @@ def test_empty_states_camera_creation_and_pending_storage(language):
                         result={'columns':2,'tiles':[]}
                     elif path=='/api/cameras/1/status':
                         result={'connectivity_state':'UNKNOWN','recording_health':'PAUSED','recording_expected':False}
+                    elif path=='/api/recordings/cleanup/query':
+                        result={'total':0,'recordings':[]}
                     elif path=='/api/storage/destinations':
                         result=[{'name':'default','expected_marker':None,'mounted':False,'available':False,'writable':False,'ready':False,'free_bytes':None,'total_bytes':None,'reason':'check_pending'}]
                     elif path=='/api/notifications/status':
@@ -787,6 +791,9 @@ def test_installation_timezone_and_synchronized_archive(tmp_path,monkeypatch,lan
                     await page.get_by_role('button',name=ui('Clear','Очистить'),exact=True).click()
                     await page.get_by_role('button',name=ui('Select all','Выбрать все'),exact=True).click()
                     await expect(page.locator('.archive-camera')).to_have_count(4)
+                    await page.evaluate("window.dispatchEvent(new StorageEvent('storage',{key:'nvr-recordings-changed',newValue:'1'}))")
+                    await expect(page.get_by_text(ui('Recordings changed. Archive refreshed.','Записи изменились. Архив обновлён.'),exact=True)).to_be_visible()
+                    await expect(page.locator('.synchronized-playback video')).to_have_count(0)
                     await page.get_by_role('button',name=ui('Overview','Обзор'),exact=True).click()
                     await page.get_by_role('link',name=ui('Account','Аккаунт')).click()
                     settings=page.locator('.time-settings')
@@ -1070,6 +1077,121 @@ def test_login_account_preferences_and_logout(width):
                 await expect(page.locator('aside')).to_have_count(0)
                 await page.reload()
                 await expect(page.get_by_label('Password',exact=True)).to_be_visible()
+                assert not errors, errors
+            finally:
+                await browser.close()
+    asyncio.run(exercise())
+
+
+@pytest.mark.browser
+@pytest.mark.skipif(os.getenv('NVR_RUN_BROWSER') != '1', reason='Build frontend and set NVR_RUN_BROWSER=1')
+@pytest.mark.parametrize('failed', [0, 1])
+def test_storage_cleanup_confirmation_selection_and_results(failed):
+    """Exercise the rendered UI, including cancellation and partial results."""
+    from playwright.async_api import async_playwright, expect
+    root = Path(__file__).resolve().parents[1] / 'frontend' / 'dist'
+
+    async def exercise():
+        entries = [{'id': i, 'camera_id': i, 'started_at': '2020-01-01T10:00:00Z', 'ended_at': '2020-01-01T10:05:00Z', 'size_bytes': 1024**3} for i in (1, 2)]
+        deletes, previews, queries = [], [], []
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(executable_path=os.getenv('NVR_CHROME_EXECUTABLE') or None, headless=True, args=['--no-sandbox'])
+            try:
+                page = await browser.new_page()
+                errors = []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                async def route(handler):
+                    request = handler.request
+                    path = urlsplit(request.url).path
+                    if path.startswith('/api/'):
+                        if path == '/api/language':
+                            result = {'default_language': 'en'}
+                        elif path == '/api/config':
+                            result = {'webrtc_port': 8889, 'timezone': 'Europe/Moscow', 'username': 'admin'}
+                        elif path == '/api/cameras':
+                            result = [{'id': 1, 'name': 'Door', 'enabled': False}, {'id': 2, 'name': 'Yard', 'enabled': False}]
+                        elif path == '/api/dashboard':
+                            result = {'cameras': 2, 'online': 0, 'writing': 0, 'errors': [], 'storage': {'free_bytes': None}}
+                        elif path == '/api/layout':
+                            result = {'columns': 2, 'tiles': []}
+                        elif path == '/api/storage/destinations':
+                            result = []
+                        elif path == '/api/notifications/status':
+                            result = {'enabled': False, 'pending': 0, 'failed': 0, 'last_delivery': None}
+                        elif path.endswith('/status'):
+                            result = {'online': False}
+                        elif path == '/api/time/resolve':
+                            body = request.post_data_json
+                            assert body['time'] in ('13:00', '14:00')
+                            result = {'instants': [{'time': f"{body['date']}T{'10:00' if body['time']=='13:00' else '11:00'}:00Z"}]}
+                        elif path == '/api/recordings/cleanup/query':
+                            await asyncio.sleep(.15)
+                            body = request.post_data_json
+                            queries.append(body)
+                            chosen = [row for row in entries if not body.get('camera_ids') or row['camera_id'] in body['camera_ids']]
+                            result = {'total': len(chosen), 'recordings': chosen}
+                        elif path == '/api/recordings/cleanup/preview':
+                            body = request.post_data_json
+                            previews.append(body)
+                            chosen = [row for row in entries if (not body.get('camera_ids') or row['camera_id'] in body['camera_ids']) and (not body.get('recording_ids') or row['id'] in body['recording_ids'])]
+                            result = {'token': str(len(previews)), 'count': len(chosen), 'size_bytes': len(chosen)*1024**3, 'criteria': body, 'cameras': [row['camera_id'] for row in chosen], 'clear_all': not body, 'active_excluded': 1}
+                        elif path == '/api/recordings/cleanup/delete':
+                            deletes.append(request.post_data_json)
+                            result = {'token': request.post_data_json['token']}
+                        elif path.startswith('/api/recordings/cleanup/progress/'):
+                            entries[:] = entries[-1:] if failed else []
+                            result = {'state': 'done', 'processed': 2, 'total': 2, 'deleted': 2-failed, 'reclaimed_bytes': (2-failed)*1024**3, 'active': 0, 'missing': 0, 'failed': failed}
+                        else:
+                            raise AssertionError(path)
+                        await handler.fulfill(json=result)
+                    else:
+                        asset = root / 'index.html' if path in ('/', '/storage') else root / path.lstrip('/')
+                        await handler.fulfill(body=asset.read_bytes(), content_type=mimetypes.guess_type(asset.name)[0] or 'application/octet-stream')
+                await page.route('http://nvr.test/**', route)
+                await page.goto('http://nvr.test/')
+                await page.get_by_role('button', name='Storage', exact=True).click()
+                section = page.locator('.recording-cleanup')
+                await expect(section.get_by_text('Loading…', exact=True)).to_be_visible()
+                await expect(section.get_by_label('Select recording 1')).to_be_visible()
+                await section.get_by_role('button', name='Preview cleanup of all filtered recordings').click()
+                dialog = page.get_by_role('dialog')
+                await expect(dialog).to_contain_text('Recordings found: 2')
+                await expect(dialog).to_contain_text('Active recording files are excluded: 1')
+                await expect(dialog.get_by_role('button', name='Delete recordings')).to_be_disabled()
+                await dialog.get_by_role('button', name='Cancel', exact=True).last.click()
+                assert not deletes
+                await section.get_by_label('All cameras', exact=True).uncheck()
+                await section.get_by_label('Door', exact=True).check()
+                await section.get_by_label('Custom date/time range').check()
+                await section.locator('input[type=datetime-local]').nth(0).fill('2020-01-01T13:00')
+                await section.locator('input[type=datetime-local]').nth(1).fill('2020-01-01T14:00')
+                await section.get_by_role('button', name='Apply filters').click()
+                await expect(section.get_by_label('Select recording 2')).to_have_count(0)
+                assert queries[-1] == {'camera_ids': [1], 'start': '2020-01-01T10:00:00Z', 'end': '2020-01-01T11:00:00Z'}
+                await section.get_by_label('Select recording 1').check()
+                await section.get_by_role('button', name='Deselect all', exact=True).click()
+                await expect(section.get_by_label('Select recording 1')).not_to_be_checked()
+                await section.get_by_role('button', name='Select all on this page').click()
+                await section.get_by_role('button', name='Preview selected recordings').click()
+                await expect(dialog).to_contain_text('Recordings found: 1')
+                assert previews[-1]['recording_ids'] == [1]
+                await dialog.get_by_role('button', name='Cancel', exact=True).last.click()
+                assert not deletes
+                await section.get_by_label('All cameras', exact=True).check()
+                await section.get_by_label('Custom date/time range').uncheck()
+                await section.get_by_role('button', name='Apply filters').click()
+                await expect(section.get_by_label('Select recording 2')).to_be_visible()
+                await section.get_by_role('button', name='Preview cleanup of all filtered recordings').click()
+                await dialog.get_by_label('Type DELETE', exact=True).fill('DELETE')
+                await dialog.get_by_role('button', name='Delete recordings').click()
+                await expect(section.get_by_text('Cleanup complete', exact=False)).to_be_visible()
+                await expect(section).to_contain_text(f'Deleted: {2-failed}')
+                await expect(section).to_contain_text(f'Failed: {failed}')
+                if failed:
+                    await expect(section.get_by_label('Select recording 2')).to_be_visible()
+                else:
+                    await expect(section.get_by_text('No recordings match these filters.')).to_be_visible()
+                assert deletes == [{'token': '3', 'confirmation': 'DELETE'}]
                 assert not errors, errors
             finally:
                 await browser.close()

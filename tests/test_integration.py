@@ -36,7 +36,7 @@ def test_real_recording_diagnostics_storage_and_schedules(tmp_path, monkeypatch)
     monkeypatch.setenv('SEGMENT_SECONDS', '2')
     monkeypatch.setenv('MIN_FREE_SPACE_GB', '0')
     monkeypatch.delenv('WEBHOOK_URL', raising=False)
-    main, _ = setup(tmp_path, monkeypatch)
+    main, video = setup(tmp_path, monkeypatch)
     processes = []
     with (tmp_path / 'gateway.log').open('w') as gateway_log, (tmp_path / 'source.log').open('w') as source_log:
         try:
@@ -106,6 +106,22 @@ def test_real_recording_diagnostics_storage_and_schedules(tmp_path, monkeypatch)
                 assert client.get(f"/api/recordings/{first['id']}", headers={'Range': 'bytes=0-99'}).status_code == 206
                 assert client.put(f'/api/cameras/{cid}', json={**payload, 'recording_schedule': None}).status_code == 200
                 wait_for_health('WRITING')
+                # Cleanup must protect the active output directory without stopping FFmpeg.
+                active_preview = client.post('/api/recordings/cleanup/preview', json={'recording_ids': [first['id']]}).json()
+                assert active_preview['count'] == 0 and active_preview['active_excluded'] == 1
+                old = destination / str(cid) / '2020/01/01/00/20200101T000000.mp4'
+                old.parent.mkdir(parents=True)
+                old.write_bytes(downloaded.content)
+                video.index_segments(cid, destination / str(cid), active=True)
+                with main.db() as connection:
+                    old_id = connection.execute('SELECT id FROM segments WHERE path=?', (str(old),)).fetchone()[0]
+                preview = client.post('/api/recordings/cleanup/preview', json={'recording_ids': [old_id]}).json()
+                assert preview['count'] == 1
+                from test_recording_cleanup import finish
+                result = finish(client, preview)
+                assert result['deleted'] == 1 and not old.exists()
+                assert marker.read_text() == 'test-disk'
+                assert state()['recording_health'] == 'WRITING' and state()['recorder_running']
                 assert client.put(f'/api/cameras/{cid}',json={**payload,'recording_enabled':False}).status_code == 200
                 assert state()['state']=='ONLINE' and state()['recording_health']=='PAUSED'
                 # Let the idle on-demand relay close. Health must remain online.

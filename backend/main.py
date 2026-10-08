@@ -8,6 +8,7 @@ import hashlib
 import time
 import shutil
 import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import date as CivilDate, time as CivilTime, datetime, timezone, timedelta
 from pathlib import Path
@@ -608,6 +609,134 @@ def destinations():
 def notification_status():
     return app.state.webhooks.status()
 
+class CleanupCriteria(BaseModel):
+    model_config = {'extra': 'forbid'}
+    camera_ids: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    recording_ids: list[int] | None = Field(default=None, min_length=1, max_length=10000)
+    start: datetime | None = None
+    end: datetime | None = None
+
+    @field_validator('camera_ids', 'recording_ids')
+    @classmethod
+    def positive_ids(cls, value):
+        if value is not None and any(item < 1 for item in value):
+            raise ValueError('Expected positive IDs')
+        return sorted(set(value)) if value is not None else None
+
+
+def cleanup_matches(value):
+    where, args = [], []
+    for field, ids in [('camera_id', value.camera_ids), ('id', value.recording_ids)]:
+        if ids is not None:
+            where.append(field + ' IN (' + ','.join('?' for _ in ids) + ')')
+            args.extend(ids)
+    if value.start is not None or value.end is not None:
+        if value.start is None or value.end is None:
+            raise HTTPException(422, 'Both start and end are required')
+        start, end = utc_time(value.start), utc_time(value.end)
+        if start >= end:
+            raise HTTPException(422, 'Start must precede end')
+        where.extend(['started_at<?', 'ended_at>?'])
+        args.extend([end.isoformat(), start.isoformat()])
+    with db() as c:
+        return [dict(row) for row in c.execute('SELECT * FROM segments' +
+                (' WHERE ' + ' AND '.join(where) if where else '') + ' ORDER BY started_at,id', args)]
+
+
+cleanup_jobs = {}
+cleanup_jobs_lock = threading.RLock()
+
+
+@app.post('/api/recordings/cleanup/query', dependencies=[Depends(auth)])
+def cleanup_query(value: CleanupCriteria, offset: int = 0, limit: int = 100):
+    matches = cleanup_matches(value)
+    offset, limit = max(0, offset), max(1, min(500, limit))
+    return {'total': len(matches), 'recordings': [segment_metadata(row) for row in matches[offset:offset + limit]]}
+
+
+@app.post('/api/recordings/cleanup/preview', dependencies=[Depends(auth)])
+def cleanup_preview(value: CleanupCriteria):
+    import video
+    records = cleanup_matches(value)
+    token = secrets.token_urlsafe(24)
+    found = {row['id'] for row in records}
+    not_found = len(set(value.recording_ids or []) - found)
+    with video.ARCHIVE_LOCK:
+        eligible = [row for row in records if not video.is_active_path(Path(row['path']), row['camera_id'])]
+    preview = {'token': token, 'count': len(eligible), 'size_bytes': sum(row['size_bytes'] for row in eligible),
+               'cameras': sorted({row['camera_id'] for row in records}), 'criteria': value.model_dump(mode='json'),
+               'active_excluded': len(records) - len(eligible), 'not_found': not_found, 'clear_all': all(item is None for item in value.model_dump().values())}
+    with cleanup_jobs_lock:
+        for key, job in list(cleanup_jobs.items()):
+            if job['state'] != 'running' and time.monotonic() - job['created'] > 900:
+                del cleanup_jobs[key]
+        if len(cleanup_jobs) >= 32:
+            raise HTTPException(429, 'Too many cleanup previews; retry later')
+        cleanup_jobs[token] = {'created': time.monotonic(), 'state': 'preview', 'preview': preview,
+                               'records': eligible, 'processed': len(records) - len(eligible) + not_found, 'total': len(records) + not_found, 'deleted': 0,
+                               'reclaimed_bytes': 0, 'active': len(records) - len(eligible), 'missing': not_found, 'failed': 0}
+    return preview
+
+
+class CleanupConfirmation(BaseModel):
+    model_config = {'extra': 'forbid'}
+    token: str
+    confirmation: str
+
+
+def cleanup_worker(job):
+    import video
+    from recording_cleanup import MetadataUpdateError, delete_indexed
+    try:
+        for original in job['records']:
+            result, size = 'failed', 0
+            try:
+                with video.ARCHIVE_LOCK:
+                    with db() as c:
+                        row = c.execute('SELECT * FROM segments WHERE id=? AND path=?', (original['id'], original['path'])).fetchone()
+                    if row is not None and any(row[key] != original[key] for key in ('camera_id', 'started_at', 'ended_at', 'size_bytes')):
+                        result, size = 'failed', 0
+                    else:
+                        result, size = delete_indexed(row) if row else ('missing', 0)
+            except MetadataUpdateError as error:
+                size = error.reclaimed_bytes
+                log.exception('manual_cleanup_index_update_failed segment_id=%d', original['id'])
+            except Exception:
+                log.exception('manual_cleanup_failed segment_id=%d', original['id'])
+            with cleanup_jobs_lock:
+                job[result] += 1
+                job['reclaimed_bytes'] += size
+                job['processed'] += 1
+    finally:
+        with cleanup_jobs_lock:
+            job['state'] = 'done'
+            job['records'] = []
+
+
+@app.post('/api/recordings/cleanup/delete', dependencies=[Depends(auth)], status_code=202)
+def cleanup_execute(value: CleanupConfirmation):
+    with cleanup_jobs_lock:
+        job = cleanup_jobs.get(value.token)
+        if job is None or time.monotonic() - job['created'] > 900 and job['state'] == 'preview':
+            raise HTTPException(410, 'Cleanup preview expired; preview again')
+        expected = 'DELETE' if job['preview']['clear_all'] else 'confirm'
+        if value.confirmation != expected:
+            raise HTTPException(422, 'Explicit deletion confirmation required')
+        if job['state'] == 'preview':
+            job['state'] = 'running'
+            threading.Thread(target=cleanup_worker, args=(job,), daemon=True).start()
+    return {'token': value.token}
+
+
+@app.get('/api/recordings/cleanup/progress/{token}', dependencies=[Depends(auth)])
+def cleanup_progress(token: str):
+    with cleanup_jobs_lock:
+        job = cleanup_jobs.get(token)
+        if job is None:
+            raise HTTPException(404, 'Cleanup not found')
+        return {key: job[key] for key in ('state', 'processed', 'total', 'deleted', 'reclaimed_bytes', 'active', 'missing', 'failed')}
+
+
 @app.get('/api/recordings', dependencies=[Depends(auth)])
 def recordings(camera_id: int | None = None, date: str | None = None, limit: int = 200, offset: int = 0,
                start: datetime | None = None, end: datetime | None = None, camera_ids: str | None = None):
@@ -809,10 +938,21 @@ def download(sid: int):
 
 @app.delete('/api/recordings/{sid}', dependencies=[Depends(auth)], status_code=204)
 def delete(sid: int):
-    path = segment(sid)
-    path.unlink(missing_ok=True)
-    with db() as c:
-        c.execute('DELETE FROM segments WHERE id=?', (sid,))
+    import video
+    from recording_cleanup import MetadataUpdateError, delete_indexed
+    with video.ARCHIVE_LOCK:
+        with db() as c:
+            row = c.execute('SELECT * FROM segments WHERE id=?', (sid,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Recording not found')
+        try:
+            result, _ = delete_indexed(row)
+        except MetadataUpdateError:
+            raise HTTPException(503, 'File deletion completed but index update failed; retry to reconcile')
+        if result == 'active':
+            raise HTTPException(409, 'Active recording excluded')
+        if result == 'failed':
+            raise HTTPException(503, 'Recording deletion refused or failed')
 
 @app.get('/api/layout', dependencies=[Depends(auth)])
 def layout():

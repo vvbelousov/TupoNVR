@@ -113,6 +113,8 @@ Copy [.env.example](.env.example) to `.env`; it contains all Compose settings. A
 
 Recordings contain **video only**, copied into roughly ten-minute MP4 segments. Filenames and metadata remain UTC; the interface and schedules use the installation timezone. Archive shows finalized segments after indexing, normally on a five-minute scan, and also after a clean recorder stop.
 
+Storage settings also provide [manual recording cleanup](docs/recording-cleanup.md): preview and delete recordings by camera, period, or individual selection. Clearing everything requires typing `DELETE`; active recording directories are excluded.
+
 Each camera records into a destination subdirectory such as `default`. Retention defaults to **7 days** and accepts 1–3650 days; blank means no age limit. Deleted-camera footage uses a seven-day age limit from the recording's start, not the deletion date. Under low space, cleanup removes the oldest eligible indexed files, protecting the current hour of active cameras. The free-space reserve cannot always be guaranteed, and unlimited retention still permits low-space deletion.
 
 Mount NFS/SMB storage on the host and verify write access and visibility inside the container. Enable destination identity protection before recording to an external mount. Unavailable storage pauses its cameras' recording while other destinations and live view continue. See [storage protection](docs/operations.md#per-destination-storage-protection).
