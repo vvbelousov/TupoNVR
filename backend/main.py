@@ -973,7 +973,8 @@ def segment(sid):
     return path
 
 class ExportInput(BaseModel):
-    camera_id: int = Field(gt=0)
+    camera_id: int | None = Field(default=None, gt=0)
+    camera_ids: list[int] | None = Field(default=None, min_length=1, max_length=64)
     start: datetime
     end: datetime
     mode: str = Field(default='exact', pattern=r'^(exact|copy)$')
@@ -983,7 +984,9 @@ class ExportInput(BaseModel):
 def create_export(value: ExportInput):
     from exports import jobs
     start, end = archive_range(value.start, value.end)
-    return jobs.create(value.camera_id, start, end, value.mode, segment)
+    if (value.camera_id is None) == (value.camera_ids is None):
+        raise HTTPException(422, 'Provide camera_id or camera_ids')
+    return jobs.create(value.camera_id, start, end, value.mode, segment, value.camera_ids)
 
 
 @app.get('/api/recordings/exports/{token}', dependencies=[Depends(auth)])
@@ -1004,7 +1007,8 @@ def export_download(token: str):
             finally:
                 jobs.finish_download(token)
 
-    return ExportResponse(job['directory'] / 'export.mp4', media_type='video/mp4', filename=job['filename'])
+    return ExportResponse(job['directory'] / ('export.' + job['format']),
+                          media_type='application/zip' if job['format'] == 'zip' else 'video/mp4', filename=job['filename'])
 
 
 @app.get('/api/recordings/{sid}', dependencies=[Depends(auth)])
