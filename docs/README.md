@@ -6,6 +6,7 @@ Start with [installation](installation.md); use the guides below for operation a
 
 | Topic | English | Русский |
 |---|---|---|
+| Camera YAML bootstrap, import, export and migration | [Camera configuration](camera-configuration.md) | [Конфигурация камер](camera-configuration_RU.md) |
 | Installation and first camera | [Installation](installation.md) | [Установка](installation_RU.md) |
 | Environment variables and container permissions | [Configuration](configuration.md) | [Конфигурация](configuration_RU.md) |
 | Camera editing, schedules, webhooks, language | [Operating guide](operations.md) | [Эксплуатация](operations_RU.md) |

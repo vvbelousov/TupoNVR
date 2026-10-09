@@ -24,3 +24,5 @@ OpenAPI доступен по `/docs`. Основные маршруты:
 При включённом входе `POST /api/login` создаёт HttpOnly cookie сессии. CLI используют тот же login endpoint и сохраняют cookie. Защищённые API без входа возвращают 401 без HTTP Basic challenge. `/health` и `/ready` публичные; `/metrics` требует входа, если он настроен. OpenAPI описывает актуальные схемы; имена `{id}` здесь условные.
 
 API [экспорта и времени](time-and-archive_RU.md#api-времени-и-архива) и [ручной очистки](recording-cleanup_RU.md#архитектура-и-api) описаны в соответствующих руководствах.
+
+Настройки камер через YAML: [схема, bootstrap и API импорта/экспорта](camera-configuration_RU.md).

@@ -6,6 +6,7 @@
 
 | Тема | English | Русский |
 |---|---|---|
+| YAML камер: первоначальная настройка, импорт, экспорт и перенос | [Camera configuration](camera-configuration.md) | [Конфигурация камер](camera-configuration_RU.md) |
 | Установка и первая камера | [Installation](installation.md) | [Установка](installation_RU.md) |
 | Переменные окружения и права контейнера | [Configuration](configuration.md) | [Конфигурация](configuration_RU.md) |
 | Правка камер, расписания, вебхуки, язык | [Operating guide](operations.md) | [Эксплуатация](operations_RU.md) |

@@ -20,7 +20,7 @@ Copy [`.env.example`](../.env.example) to `.env`; these are Compose settings. Ap
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `DEFAULT_LANGUAGE` | `en` | Initial interface language: `en` or `ru` |
 | `APP_TIMEZONE` | `UTC` | Initial installation timezone; a UI-saved preference takes precedence |
-| `NVR_IMAGE` | `vvbelousov/tuponvr:0.2.0` | Pinned published application image/version; local builds use `compose.dev.yml` (see [development](development.md)) |
+| `NVR_IMAGE` | `vvbelousov/tuponvr:0.2.1` | Pinned published application image/version; local builds use `compose.dev.yml` (see [development](development.md)) |
 | `NVR_UID`, `NVR_GID` | `0`, `0` | Optional numeric container identity; non-root requires writable host directories |
 | `WEBHOOK_URL` | empty | Generic HTTP(S) notification endpoint; empty disables notifications |
 | `WEBHOOK_TOKEN` | empty | Optional Bearer token |
@@ -38,3 +38,5 @@ Use authentication for shared deployments and HTTPS with secure cookies outside 
 Root remains the default for compatibility with existing bind mounts; it is not required by FastAPI, FFmpeg, or MediaMTX API calls. To run the application as a non-root user, create the data/recording directories first with ownership matching `NVR_UID`/`NVR_GID`, then set those numeric IDs in `.env`. Existing root-owned databases, settings, and markers may need an intentional ownership change before switching. Do not loosen permissions globally or change NAS ownership blindly.
 
 The default deployment uses a bridge network, drops `NET_RAW`, and prevents new privileges. The optional Linux LAN overlay uses the host network for native WebRTC interface discovery. Privileged mode and a Docker socket are unnecessary. Writable data/recording mounts and temporary-file space remain necessary. The image healthcheck checks `/health`; `/ready` separately verifies MediaMTX connectivity.
+
+Camera YAML settings: [schema, bootstrap and import/export API](camera-configuration.md).

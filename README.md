@@ -10,6 +10,8 @@ Watch IP cameras live, record their video, and find footage on a shared archive 
 
 *Browser-test screenshot with synthetic footage; the fourth camera has a gap. Click to enlarge.*
 
+Camera settings can be bootstrapped, backed up and imported with YAML on the Cameras page; imports preview changes before confirmation. See [camera configuration](docs/camera-configuration.md).
+
 ## Key features
 
 - RTSP camera management with separate connectivity and recording status.
@@ -33,7 +35,7 @@ Requires **Linux, Docker Engine, Docker Compose 2.24.4+**, network access to RTS
    cp .env.example .env
    ```
 
-2. Edit `.env`: set `NVR_IMAGE=vvbelousov/tuponvr:0.2.0` and `NVR_BIND=0.0.0.0`, set both `AUTH_USERNAME` and `AUTH_PASSWORD`, and leave `WEBRTC_HOST` blank. Local recordings use `./recordings`; mount external storage before using it. Allow **TCP 8080 and UDP 8189** for trusted viewers; host TCP ports **8554, 8889, 9997** must be free.
+2. Edit `.env`: set `NVR_IMAGE=vvbelousov/tuponvr:0.2.1` and `NVR_BIND=0.0.0.0`, set both `AUTH_USERNAME` and `AUTH_PASSWORD`, and leave `WEBRTC_HOST` blank. Local recordings use `./recordings`; mount external storage before using it. Allow **TCP 8080 and UDP 8189** for trusted viewers; host TCP ports **8554, 8889, 9997** must be free.
 
 3. Pull the pinned Docker Hub image and start it:
 

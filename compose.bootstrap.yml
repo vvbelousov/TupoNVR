@@ -1,0 +1,10 @@
+# Optional: use only when a bootstrap file already exists.
+services:
+  nvr-app:
+    volumes:
+      - type: bind
+        source: ${CAMERA_BOOTSTRAP_FILE:-./cameras.yaml}
+        target: /config/bootstrap/cameras.yaml
+        read_only: true
+        bind:
+          create_host_path: false

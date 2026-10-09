@@ -64,3 +64,5 @@ Browser signaling requires application authentication when configured; direct Me
 ## Development and validation
 
 Docker builds, source development, testing and debugging are documented in [the developer guide](development.md).
+
+Camera YAML settings: [schema, bootstrap and import/export API](camera-configuration.md).
