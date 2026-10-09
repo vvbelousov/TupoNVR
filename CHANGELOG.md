@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+- Optional one-shot YAML camera bootstrap, plus authenticated camera YAML import/export on the Cameras page.
+- Stable portable camera keys, complete recording settings/schedules/retention, partial updates and idempotent imports.
+- Credential-free exports by default, explicit secret backups, field-level previews, confirmation, stale-preview checks and transactional import rollback.
+- Safe bounded YAML parsing, optional read-only Compose bootstrap overlay and bilingual schema/migration documentation.
+
+### Upgrade notes
+
+Back up SQLite and recordings before upgrading. Startup adds stable keys to existing camera records without changing database IDs or recording associations. Existing installations need no bootstrap file or extra services. SQLite remains authoritative; bootstrap only imports into an empty camera database and never overwrites UI edits on restart. Malformed optional bootstrap files produce warnings and startup continues.
+
+Use `vvbelousov/tuponvr:0.2.1` after publication. Keep the same recording/data volumes and Compose overlays. YAML backs up camera settings only; destination protection, installation timezone and footage need separate backup/migration. Older images may require the pre-upgrade database backup for rollback. See [camera configuration](docs/camera-configuration.md).
+
 ## 0.2.0
 
 - Dedicated single-camera live view, reloadable camera links, and fullscreen controls.

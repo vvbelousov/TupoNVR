@@ -6,7 +6,7 @@
 
 Docker Engine and Compose v2; network access to the cameras; writable recording storage with free space above `MIN_FREE_SPACE_GB` (default 5 GiB). Docker bundles the UI, Python, FFmpeg/ffprobe, CA certificates, and timezone data. A modern WebRTC/MP4 browser and a compatible camera codec are required; start with H.264. There are no seeded cameras or manual database setup.
 
-The standard installation uses the prebuilt `vvbelousov/tuponvr:0.2.0` image, verified on [Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags?name=0.2.0) on October 9, 2026 (Linux amd64). Git, Python, Node.js and compilation are unnecessary. Linux LAN needs **Compose 2.24.4+** and free host TCP ports 8554, 8889, 9997; use bridge mode for Docker Desktop. See [networking](networking.md). Contributor workflows are in [development](development.md).
+The standard installation uses the prebuilt `vvbelousov/tuponvr:0.2.1` image after the 0.2.1 release is published ([Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags?name=0.2.1)); this source tree prepares that release. Git, Python, Node.js and compilation are unnecessary. Linux LAN needs **Compose 2.24.4+** and free host TCP ports 8554, 8889, 9997; use bridge mode for Docker Desktop. See [networking](networking.md). Contributor workflows are in [development](development.md).
 
 ## Prepare a deployment
 
@@ -28,7 +28,7 @@ Edit `.env` before starting:
 
 ## Start the prebuilt image
 
-Keep `NVR_IMAGE=vvbelousov/tuponvr:0.2.0` in `.env`. The base Compose file has no build configuration. Avoid floating tags. Configuration downloads come from `dev`; the image is pinned independently, so unpublished UI changes need a new release. Retain the downloaded files for subsequent commands.
+Keep `NVR_IMAGE=vvbelousov/tuponvr:0.2.1` in `.env`. The base Compose file has no build configuration. Avoid floating tags. Configuration downloads come from `dev`; the image is pinned independently, so unpublished UI changes need a new release. Retain the downloaded files for subsequent commands.
 
 Linux LAN:
 

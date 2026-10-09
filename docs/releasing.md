@@ -1,12 +1,12 @@
 # Release preparation: maintainer guide
 
-The current target is **v0.2.0**. Prepare the version bump and release notes on a branch, merge reviewed changes into `master`, and publish only from that reviewed commit. A local version bump does not publish a release or image.
+The current target is **v0.2.1**. Prepare the version bump and release notes on a branch, merge reviewed changes into `master`, and publish only from that reviewed commit. A local version bump does not publish a release or image.
 
 ## Version and license
 
 Before publishing, confirm `frontend/package.json`, both application-version entries in `frontend/package-lock.json`, `.env.example`, and the bilingual image references use the intended version. Update `CHANGELOG.md` against the previous released source, including upgrade requirements.
 
-The workflow checks out the **release tag**, not the newest `dev` or `master` commit. A `v0.2.0` release pointing at a commit whose manifest says `0.1.0` fails preflight. Merge the version bump into `master` before tagging. Re-running the failed workflow does not change the tagged source. If an incorrect release/tag already exists, review and correct its target explicitly; do not silently force-move a published tag or bypass the version/ancestry guards.
+The workflow checks out the **release tag**, not the newest `dev` or `master` commit. A `v0.2.1` release pointing at a commit whose manifest says `0.1.0` fails preflight. Merge the version bump into `master` before tagging. Re-running the failed workflow does not change the tagged source. If an incorrect release/tag already exists, review and correct its target explicitly; do not silently force-move a published tag or bypass the version/ancestry guards.
 
 `frontend/package.json` is the authoritative application version. Its lockfile must agree. The backend reads this manifest in development and its bundled copy in Docker; FastAPI exposes it in OpenAPI. Release preflight requires a matching `v<version>` tag. Update package.json/package-lock.json together when preparing a new release.
 
@@ -44,7 +44,7 @@ Separate native Docker jobs run on `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm`
 
 `.github/workflows/release.yml` triggers only when a GitHub Release is **published**, never on an ordinary master push. It verifies master ancestry, version/prerelease consistency, license, image name, and platform selection. It reruns CI without registry secrets, then waits for the **dockerhub** environment approval before its publishing job can receive the token.
 
-For stable `v0.2.0`, Docker metadata tooling produces `0.2.0`, `0.2`, and `latest`; it does not create `0`. Prerelease versions such as `v0.2.0-rc.1` produce only their full prerelease tag, with no minor or latest aliases. The verifier compares the release ID with GitHub’s latest stable release before assigning the minor/latest aliases. Older or non-latest releases publish only their full version tag, preventing them from moving stable aliases backwards. Publish in increasing version order and review which release GitHub marks latest.
+For stable `v0.2.1`, Docker metadata tooling produces `0.2.1`, `0.2`, and `latest`; it does not create `0`. Prerelease versions such as `v0.2.1-rc.1` produce only their full prerelease tag, with no minor or latest aliases. The verifier compares the release ID with GitHub’s latest stable release before assigning the minor/latest aliases. Older or non-latest releases publish only their full version tag, preventing them from moving stable aliases backwards. Publish in increasing version order and review which release GitHub marks latest.
 
 The image carries title, description, source, version, Git revision, and license labels. Native BuildKit provenance (`mode=max`) and SBOM attestations are enabled, with a separate release cache. Never pass secrets as build arguments: provenance can expose argument values. See [Docker attestations](https://docs.docker.com/build/ci/github-actions/attestations/), [metadata](https://docs.docker.com/build/ci/github-actions/manage-tags-labels/), and [caching](https://docs.docker.com/build/ci/github-actions/cache/).
 
@@ -83,7 +83,7 @@ Local `.env` contains configured authentication and local SQLite/runtime files e
 - [ ] Add/review authentic Overview, live Multiview, and Storage screenshots; the supplied Archive screenshot uses synthetic footage.
 - [ ] Decide whether to enable ARM publishing only after its tests pass; leave the default otherwise.
 - [ ] Review third-party notices and corresponding-source obligations for the exact distributed image; see [third-party details](third-party.md).
-- [ ] Review changelog and upgrade/backup instructions, then manually create and publish GitHub Release v0.2.0.
+- [ ] Review changelog and upgrade/backup instructions, then manually create and publish GitHub Release v0.2.1.
 - [ ] Verify Docker Hub tags, OCI metadata, provenance/SBOM, and pull on a clean machine.
 - [ ] Test published-image deployment on amd64 and arm64 if advertised, plus update/persistence and backup restoration.
 
