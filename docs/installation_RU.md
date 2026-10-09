@@ -4,15 +4,18 @@
 
 ## Требования
 
-Git, Docker Engine и Compose v2; доступ к камерам по сети; доступное для записи хранилище со свободным местом сверх `MIN_FREE_SPACE_GB` (по умолчанию 5 GiB). Docker включает интерфейс, Python, FFmpeg/ffprobe, сертификаты CA и базу часовых поясов. Нужен современный браузер с WebRTC/MP4 и совместимый кодек камеры; начните с H.264. Предустановленных камер и ручной настройки базы нет.
+Docker Engine и Compose v2; доступ к камерам по сети; доступное для записи хранилище со свободным местом сверх `MIN_FREE_SPACE_GB` (по умолчанию 5 GiB). Docker включает интерфейс, Python, FFmpeg/ffprobe, сертификаты CA и базу часовых поясов. Нужен современный браузер с WebRTC/MP4 и совместимый кодек камеры; начните с H.264. Предустановленных камер и ручной настройки базы нет.
 
-[Быстрый старт README](../README_RU.md#быстрый-старт) собирает исходники `dev` на Linux Engine с сетью хоста. Нужны **Compose 2.24.4+** и свободные TCP-порты хоста 8554, 8889, 9997; этот вариант не предназначен для Docker Desktop. Выбор режима описан в [сетевом руководстве](networking_RU.md).
+Стандартная установка использует готовый образ `vvbelousov/tuponvr:0.2.0`, проверенный в [Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags?name=0.2.0) 9 октября 2026 года (Linux amd64). Git, Python, Node.js и компиляция не нужны. Для Linux LAN нужны **Compose 2.24.4+** и свободные TCP-порты хоста 8554, 8889, 9997; для Docker Desktop используйте bridge-режим. См. [сеть](networking_RU.md). Разработка описана отдельно в [руководстве для разработчиков](development.md).
 
 ## Подготовка
 
 ```sh
-git clone --branch dev https://github.com/vvbelousov/TupoNVR.git
+mkdir -p TupoNVR
 cd TupoNVR
+for file in docker-compose.yml compose.lan.yml mediamtx.yml .env.example; do
+  curl -fL "https://raw.githubusercontent.com/vvbelousov/TupoNVR/dev/$file" -o "$file"
+done
 cp .env.example .env
 ```
 
@@ -23,45 +26,25 @@ cp .env.example .env
 - Оставьте `DATA_DIR=./data`, `DEFAULT_RECORDING_PATH=./recordings` или выберите каталоги хоста. Внешнее хранилище сначала смонтируйте и проверьте его видимость в контейнере.
 - При стандартном запуске от root Compose создаёт каталоги bind mounts, приложение — локальный каталог назначения `default`. Для non-root заранее создайте доступные для записи каталоги с владельцем `NVR_UID`/`NVR_GID`; см. [конфигурацию](configuration_RU.md#права-контейнера).
 
-## Сборка исходников
+## Запуск готового образа
+
+Оставьте `NVR_IMAGE=vvbelousov/tuponvr:0.2.0` в `.env`. Основной Compose-файл не содержит сборки. Не используйте плавающие теги. Конфигурация скачивается из `dev`; образ фиксирован отдельно, поэтому неопубликованные изменения интерфейса требуют нового релиза. Сохраните использованные файлы для последующих команд.
 
 Linux LAN:
 
 ```sh
-NVR_IMAGE=tuponvr:local docker compose -f docker-compose.yml -f compose.lan.yml up -d --build
+docker compose -f docker-compose.yml -f compose.lan.yml pull
+docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build
 ```
 
 Bridge / localhost:
 
 ```sh
-NVR_IMAGE=tuponvr:local docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 ```
 
-Значение перед командой переопределяет ссылку на опубликованный образ в `.env`. Для последующих сборок задайте `NVR_IMAGE=tuponvr:local` в `.env` или повторяйте префикс. Невыпущенные изменения требуют сборки исходников.
-
-## Запуск готового образа
-
-Используйте файлы того же проверенного релиза, что и выбранный образ: `docker-compose.yml`, `mediamtx.yml`, `.env.example` и нужные overlays. В примере задано `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`; проверьте наличие в [тегах Docker Hub](https://hub.docker.com/r/vvbelousov/tuponvr/tags) и выберите фиксированную версию или digest. Если образ недоступен, соберите исходники. Тег `latest`, если опубликован, может меняться при обновлениях.
-
-Linux LAN:
-
-```sh
-docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build --pull always
-```
-
-Bridge:
-
-```sh
-docker compose up -d --no-build --pull always
-```
-
-Необязательный `compose.image.yml` требует непустой `NVR_IMAGE` и задаёт `pull_policy: always`:
-
-```sh
-docker compose -f docker-compose.yml -f compose.image.yml up -d --no-build
-```
-
-Для LAN добавьте `-f compose.lan.yml` после основного файла и перед overlay образа. Готовый образ не требует Node/Python на хосте или локальной сборки.
+Необязательный `compose.image.yml` требует непустой `NVR_IMAGE` и всегда загружает образ. Его можно скачать по тому же URL и добавить `-f compose.image.yml` после остальных файлов. Если выбранный образ недоступен, остановитесь и проверьте Docker Hub; не заменяйте установку локальной сборкой.
 
 ## Первый запуск
 
@@ -74,7 +57,7 @@ docker compose -f docker-compose.yml -f compose.image.yml up -d --no-build
 
 ## Управление запуском
 
-Всегда используйте одни и те же Compose-файлы. Изменение `.env` требует `up -d` для пересоздания окружения; `restart` недостаточно. Для исходников нужен `--build`, для выбранного опубликованного образа — `--no-build --pull always`.
+Всегда используйте одни и те же Compose-файлы. Изменение `.env` требует `up -d` для пересоздания окружения; `restart` недостаточно. Загрузите выбранную опубликованную версию, затем выполните `up -d --no-build`.
 
 Примеры Linux LAN:
 

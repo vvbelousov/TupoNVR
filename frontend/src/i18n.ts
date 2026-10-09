@@ -154,6 +154,8 @@ const ru:Record<string,string> = {
   "Appliance time":"Время устройства",
   "Timezone":"Часовой пояс",
   "Current local time":"Текущее местное время",
+  "Loading timezones…":"Загрузка часовых поясов…",
+  "No matching timezones":"Часовые пояса не найдены",
   "Change timezone":"Изменить часовой пояс",
   "Save timezone":"Сохранить часовой пояс",
   "Applies to displayed times, archive dates and every recording schedule. Existing recording timestamps stay unchanged.":"Применяется ко времени в интерфейсе, датам архива и всем расписаниям записи. Метки времени существующих записей не изменяются.",
