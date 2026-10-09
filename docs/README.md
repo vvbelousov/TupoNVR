@@ -6,7 +6,8 @@ Start with [installation](installation.md); use the guides below for operation a
 
 | Topic | English | Русский |
 |---|---|---|
-| Installation, first camera, source builds and images | [Installation](installation.md) | [Установка](installation_RU.md) |
+| Camera YAML bootstrap, import, export and migration | [Camera configuration](camera-configuration.md) | [Конфигурация камер](camera-configuration_RU.md) |
+| Installation and first camera | [Installation](installation.md) | [Установка](installation_RU.md) |
 | Environment variables and container permissions | [Configuration](configuration.md) | [Конфигурация](configuration_RU.md) |
 | Camera editing, schedules, webhooks, language | [Operating guide](operations.md) | [Эксплуатация](operations_RU.md) |
 | Retention, external mounts, backup and recovery | [Storage](storage.md) | [Хранилища](storage_RU.md) |
@@ -32,3 +33,5 @@ These development, policy and historical references remain in English:
 ## Documentation assets
 
 [Archive screenshot](images/archive-synchronized.png): actual UI from browser tests with synthetic video, three cameras playing and a fourth with a gap. It demonstrates the interface, not real-camera compatibility. No hosted demo or additional screenshots are included; synthetic camera testing is described in the contribution guide.
+
+[Development and validation](development.md) — Docker builds and source workflows for contributors.

@@ -34,6 +34,8 @@ def test_snapshots_recent_archive_ranges_and_export(tmp_path, monkeypatch, langu
     root = Path(__file__).resolve().parents[1] / 'frontend' / 'dist'
     now = (datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=301)).isoformat()
     export_requests = []
+    with main.db() as c:
+        c.execute("INSERT INTO cameras(id,name,rtsp_url) VALUES(2,'Empty','rtsp://empty/live')")
     camera = {'id': 1, 'name': 'Door', 'enabled': True, 'recording_enabled': True}
     def ui(en, ru):
         return en if language == 'en' else ru
@@ -43,7 +45,7 @@ def test_snapshots_recent_archive_ranges_and_export(tmp_path, monkeypatch, langu
             browser = await playwright.chromium.launch(executable_path=os.getenv('NVR_CHROME_EXECUTABLE') or None,
                                                        headless=True, args=['--no-sandbox'])
             try:
-                context = await browser.new_context(timezone_id='Asia/Tokyo', viewport={'width': width, 'height': 900})
+                context = await browser.new_context(timezone_id='Asia/Tokyo', viewport={'width': width, 'height': 900}, has_touch=width == 390)
                 page = await context.new_page()
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
@@ -62,7 +64,7 @@ close(){this.video.pause();this.video.src=''}};''')
                     elif url.path == '/api/language':
                         await handler.fulfill(json={'default_language': language})
                     elif url.path == '/api/cameras':
-                        await handler.fulfill(json=[camera])
+                        await handler.fulfill(json=[camera, {**camera, 'id': 2, 'name': 'Empty'}])
                     elif url.path == '/api/dashboard':
                         await handler.fulfill(json={'cameras': 1, 'storage': {'free_bytes': None}, 'errors': []})
                     elif url.path.endswith('/status'):
@@ -100,11 +102,69 @@ close(){this.video.pause();this.video.src=''}};''')
                     await page.get_by_role('button', name=ui('Save frame', 'Сохранить кадр'), exact=True).click()
                 assert Path(await (await archive_download.value).path()).read_bytes().startswith(b'\x89PNG')
                 export = page.locator('.archive-export')
-                await export.get_by_role('button', name=ui('Set start at cursor', 'Начало по курсору'), exact=True).click()
+                await expect(export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True)).not_to_be_visible()
+                await export.get_by_role('button', name=ui('Export clips', 'Экспорт клипов')).click()
+                await expect(page.get_by_role('slider', name=ui('Export start boundary', 'Граница начала экспорта'), exact=True)).to_be_visible()
                 start = await export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True).input_value()
                 assert start.startswith('2020-01-01T03:00:')  # configured timezone, not browser timezone
+                # Collapsing preserves both boundaries and independent camera choices.
+                end_before = await export.get_by_label(ui('Export end', 'Конец экспорта'), exact=True).input_value()
+                await export.get_by_role('button', name=ui('Select all', 'Выбрать все'), exact=True).click()
+                assert await export.get_by_role('checkbox').count() == 2
+                assert await export.get_by_role('checkbox').nth(1).is_checked()
+                await export.get_by_role('button', name=ui('Export clips', 'Экспорт клипов')).click()
+                await expect(page.get_by_role('slider', name=ui('Export start boundary', 'Граница начала экспорта'), exact=True)).not_to_be_visible()
+                await export.get_by_role('button', name=ui('Export clips', 'Экспорт клипов')).click()
+                assert await export.get_by_label(ui('Export end', 'Конец экспорта'), exact=True).input_value() == end_before
+                assert await export.get_by_role('checkbox').nth(1).is_checked()
+                await export.get_by_role('button', name=ui('Clear', 'Очистить'), exact=True).click()
+                await expect(export.get_by_role('button', name=ui('Create export', 'Создать экспорт'), exact=True)).to_be_disabled()
+                await export.get_by_role('checkbox', name='Door').check()
+                await expect(page.get_by_label(ui('Archive camera', 'Камера архива'), exact=True)).to_have_value('1')
+                # Use the dedicated export band; the master seek cursor/player must stay put.
+                before_cursor = await page.get_by_test_id('master-time').inner_text()
+                band = page.locator('.export-selection')
+                await band.scroll_into_view_if_needed()
+                box = await band.bounding_box()
+                await page.mouse.move(box['x'] + box['width'] * .2, box['y'] + 16)
+                await page.mouse.down()
+                await page.mouse.move(box['x'] + box['width'] * .6, box['y'] + 16, steps=5)
+                await page.mouse.up()
+                handle = page.get_by_role('slider', name=ui('Export start boundary', 'Граница начала экспорта'), exact=True)
+                handle_before = int(await handle.get_attribute('aria-valuenow'))
+                await handle.press('ArrowRight')
+                await expect(handle).to_have_attribute('aria-valuenow', str(handle_before + 1))
+                assert await page.get_by_test_id('master-time').inner_text() == before_cursor
+                box = await handle.bounding_box()
+                band_box = await band.bounding_box()
+                x, y = box['x'] + box['width']/2, box['y'] + box['height']/2
+                if width == 390:
+                    touch = await context.new_cdp_session(page)
+                    await touch.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y}]})
+                    await touch.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': [{'x': x+band_box['width']*.05, 'y': y}]})
+                    await touch.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+                    await touch.detach()
+                else:
+                    await page.mouse.move(x, y)
+                    await page.mouse.down()
+                    await page.mouse.move(x+band_box['width']*.05, y, steps=4)
+                    await page.mouse.up()
+                await expect(handle).not_to_have_attribute('aria-valuenow', str(handle_before + 1))
+                assert await page.get_by_test_id('master-time').inner_text() == before_cursor
+                preserved = await export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True).input_value()
+                await page.get_by_role('button', name=ui('Full day', 'Полные сутки'), exact=True).click()
+                assert await export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True).input_value() == preserved
+                await page.get_by_role('button', name='5 '+ui('min', 'мин'), exact=True).click()
+                assert await export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True).input_value() == preserved
                 await export.get_by_label(ui('Export start', 'Начало экспорта'), exact=True).fill('2020-01-01T03:00:01')
                 await export.get_by_label(ui('Export end', 'Конец экспорта'), exact=True).fill('2020-01-01T03:00:09')
+                await expect(page.get_by_role('slider', name=ui('Export start boundary', 'Граница начала экспорта'), exact=True)).to_have_attribute('aria-valuenow', str(int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp())+1))
+                # Changing viewport can hide either boundary without changing the interval.
+                await page.get_by_role('button', name='5 '+ui('min', 'мин'), exact=True).click()
+                await expect(export.get_by_role('button', name=ui('Locate end', 'Показать конец'), exact=True)).to_be_visible()
+                await export.get_by_role('button', name=ui('Locate end', 'Показать конец'), exact=True).click()
+                await expect(page.get_by_role('slider', name=ui('Export end boundary', 'Граница конца экспорта'), exact=True)).to_have_attribute('aria-valuenow', str(int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp())+9))
+                assert await page.get_by_test_id('master-time').inner_text() == before_cursor
                 await export.get_by_role('button', name=ui('Create export', 'Создать экспорт'), exact=True).click()
                 await expect(export).to_contain_text(ui('Export ready', 'Экспорт готов'), timeout=20000)
                 await expect(export).to_contain_text(ui('Recording gaps omitted', 'Пропуски записи исключены'))
@@ -112,15 +172,25 @@ close(){this.video.pause();this.video.src=''}};''')
                     await export.get_by_role('link', name=ui('Download MP4', 'Скачать MP4'), exact=True).click()
                 assert (await video_download.value).suggested_filename.startswith('camera-1-')
                 assert not jobs.jobs
+                assert export_requests[-1]['camera_id'] == 1
                 # Missing decoded media is reported in place, without replacing the player.
                 await page.locator('.archive-camera video').evaluate('(video)=>{video.removeAttribute("src");video.load()}')
                 await page.get_by_role('button', name=ui('Save frame', 'Сохранить кадр'), exact=True).click()
                 await expect(page.locator('.snapshot-error')).to_contain_text(ui('No decoded frame', 'Нет декодированного кадра'))
                 assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                await export.get_by_role('button', name=ui('Select all', 'Выбрать все'), exact=True).click()
+                await export.get_by_role('button', name=ui('Create export', 'Создать экспорт'), exact=True).click()
+                await expect(export).to_contain_text(ui('Export partially completed', 'Экспорт завершён частично'), timeout=20000)
+                assert export_requests[-1]['camera_ids'] == [1, 2]
+                async with page.expect_download() as zip_download:
+                    await export.get_by_role('link', name=ui('Download ZIP', 'Скачать ZIP'), exact=True).click()
+                assert (await zip_download.value).suggested_filename.endswith('.zip')
+                assert not jobs.jobs
                 if language == 'en' and width == 1280:
                     main.save_timezone('America/New_York')
                     await page.reload()
                     export = page.locator('.archive-export')
+                    await export.get_by_role('button', name='Export clips').click()
                     await export.get_by_label('Export start', exact=True).fill('2026-03-08T02:30')
                     await export.get_by_label('Export end', exact=True).fill('2026-03-08T03:30')
                     await export.get_by_role('button', name='Create export', exact=True).click()

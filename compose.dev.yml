@@ -1,0 +1,8 @@
+# Contributors only: docker compose -f docker-compose.yml -f compose.dev.yml up -d --build
+services:
+  nvr-app:
+    image: tuponvr:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: backend/Dockerfile

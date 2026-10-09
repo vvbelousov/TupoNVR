@@ -58,28 +58,6 @@ DST использует местное время: осенний повтор�
 
 ## Разработка и проверки
 
-Нужны Python 3.12+, Node 22+, FFmpeg/ffprobe и системная база часовых поясов (`tzdata`).
+Сборка Docker, запуск исходников, тестирование и отладка перенесены в [руководство для разработчиков](development.md) (на английском).
 
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements-dev.txt
-npm ci --prefix frontend
-scripts/validate.sh
-```
-
-Скрипт запускает `pip check`, Python correctness rules Ruff (F), frontend reader/clock tests, строгую проверку TypeScript, сборку Vite, pytest. Общего стандарта форматирования нет. `NVR_PYTHON` выбирает Python. Тесты изолируют SQLite и записи во временных каталогах.
-
-Интеграционные/браузерные тесты по умолчанию пропускаются, в CI обязательны. Локальный запуск:
-
-```sh
-# Download and extract official MediaMTX 1.21.1 for your operating system.
-.venv/bin/python -m playwright install chromium
-NVR_MEDIAMTX_BIN=/absolute/path/to/mediamtx NVR_RUN_BROWSER=1 scripts/validate.sh
-# Set NVR_CHROME_EXECUTABLE to use an installed Chrome executable instead.
-```
-
-Нужен свободный `localhost:8554`; остальные порты автоматические. Запускаются синтетическая H.264 RTSP-камера, MediaMTX и приложение: проверяется FFmpeg progress, диагностика, потеря/восстановление storage ID, остановка/запуск по расписанию, MP4 finalization/indexing, downloads, HTTP Range.
-
-Chromium проверяет собранный React на обоих языках: login, расписание, защиту хранилищ, диагностику, страницы архива, последовательный просмотр, сохранение layout во время polling. Синхронизированный архив использует реальные API/SQLite и native videos с поясом браузера, отличным от установки. Backend/clock tests покрывают пояс, DST, расписания, неизменность меток записей, независимые offsets, gaps, общие controls, drift correction.
-
-[CI](../.github/workflows/ci.yml) проверяет Python 3.12 / Node 22, checksum MediaMTX, Docker image, `/health`, static assets и обновления SQLite в контейнере. CI не публикует и не развёртывает приложение. Длительные испытания реальных камер и NFS/SMB не выполнены. См. [CONTRIBUTING.md](../CONTRIBUTING.md) (на английском).
+Настройки камер через YAML: [схема, bootstrap и API импорта/экспорта](camera-configuration_RU.md).

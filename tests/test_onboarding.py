@@ -103,6 +103,8 @@ def test_compose_network_modes_and_explicit_override(lan, host):
     gateway, app = (config['services'][name] for name in ('mediamtx', 'nvr-app'))
     assert gateway['environment']['MTX_WEBRTCADDITIONALHOSTS'] == (host or ('' if lan else '127.0.0.1'))
     assert app['restart'] == gateway['restart'] == 'unless-stopped'
+    assert app['image'] == 'vvbelousov/tuponvr:0.2.1'
+    assert 'build' not in app
     assert app['environment']['DATABASE_PATH'] == '/data/nvr.sqlite3'
     assert app['environment']['DEFAULT_RECORDING_PATH'] == '/recordings'
     if lan:

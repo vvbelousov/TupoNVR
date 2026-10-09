@@ -63,28 +63,6 @@ Browser signaling requires application authentication when configured; direct Me
 
 ## Development and validation
 
-Requirements: Python 3.12+, Node 22+, FFmpeg/ffprobe, and the operating system timezone database (`tzdata`).
+Docker builds, source development, testing and debugging are documented in [the developer guide](development.md).
 
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements-dev.txt
-npm ci --prefix frontend
-scripts/validate.sh
-```
-
-The validation script runs `pip check`, Ruff's Python correctness rules (F), frontend reader/clock tests, strict TypeScript checking, the Vite build, and pytest. There is no repository-wide formatting standard. `NVR_PYTHON` selects another Python executable. Tests isolate SQLite and recordings in temporary directories.
-
-Integration and browser tests are skipped by default and required in CI. To run them locally:
-
-```sh
-# Download and extract official MediaMTX 1.21.1 for your operating system.
-.venv/bin/python -m playwright install chromium
-NVR_MEDIAMTX_BIN=/absolute/path/to/mediamtx NVR_RUN_BROWSER=1 scripts/validate.sh
-# Set NVR_CHROME_EXECUTABLE to use an installed Chrome executable instead.
-```
-
-The integration test needs a free `localhost:8554`; other ports are selected automatically. It starts a synthetic H.264 RTSP camera, MediaMTX, and the application, checking FFmpeg progress, active diagnostics, storage ID loss/recovery, scheduled stop/resume, MP4 finalization/indexing, downloads, and HTTP Range.
-
-Chromium tests exercise the built React assets in English and Russian, including login, schedule editing, storage protection, diagnostics, archive pagination, sequential playback, and layout persistence during polling. Synchronized archive tests use real API/SQLite responses and native videos, with a browser timezone different from the installation timezone. Backend and clock tests cover timezone conversion, DST, schedules, unchanged recording timestamps, independent offsets, gaps, shared controls, and drift correction.
-
-[The CI workflow](../.github/workflows/ci.yml) runs checks on Python 3.12 / Node 22, verifies the downloaded MediaMTX checksum, builds the Docker image, and checks `/health`, static assets, and SQLite upgrades inside the container. CI does not publish or deploy anything. Long-running soak tests with real cameras and NFS/SMB have not been performed.
+Camera YAML settings: [schema, bootstrap and import/export API](camera-configuration.md).

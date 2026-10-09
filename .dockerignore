@@ -1,21 +1,25 @@
-# Allow only files used by the production Dockerfile into the build context.
-**
+# Limit the build context to application source and frontend build inputs.
+# Use literal directory exceptions so Docker can prune private runtime data.
+*
 !LICENSE
 !backend/
-!backend/*.py
-!backend/requirements.txt
-!backend/Dockerfile
+backend/__pycache__/
+backend/requirements-dev.txt
 !frontend/
+frontend/*
 !frontend/package.json
 !frontend/package-lock.json
 !frontend/index.html
 !frontend/tsconfig.json
 !frontend/src/
-!frontend/src/**
 !frontend/scripts/
-!frontend/scripts/**
 !frontend/public/
-!frontend/public/**
 # Never send environment files, even if later added under an allowed directory.
 **/.env
 **/.env.*
+# Prune runtime directories explicitly: export storage is private (0700) and
+# must not be traversed by the Docker client while collecting source files.
+data/
+data-dev/
+recordings/
+recordings-dev/

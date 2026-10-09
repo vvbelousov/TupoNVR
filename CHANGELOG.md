@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+- Optional one-shot YAML camera bootstrap, plus authenticated camera YAML import/export on the Cameras page.
+- Stable portable camera keys, complete recording settings/schedules/retention, partial updates and idempotent imports.
+- Credential-free exports by default, explicit secret backups, field-level previews, confirmation, stale-preview checks and transactional import rollback.
+- Safe bounded YAML parsing, optional read-only Compose bootstrap overlay and bilingual schema/migration documentation.
+
+### Upgrade notes
+
+Back up SQLite and recordings before upgrading. Startup adds stable keys to existing camera records without changing database IDs or recording associations. Existing installations need no bootstrap file or extra services. SQLite remains authoritative; bootstrap only imports into an empty camera database and never overwrites UI edits on restart. Malformed optional bootstrap files produce warnings and startup continues.
+
+Use `vvbelousov/tuponvr:0.2.1` after publication. Keep the same recording/data volumes and Compose overlays. YAML backs up camera settings only; destination protection, installation timezone and footage need separate backup/migration. Older images may require the pre-upgrade database backup for rollback. See [camera configuration](docs/camera-configuration.md).
+
 ## 0.2.0
 
 - Dedicated single-camera live view, reloadable camera links, and fullscreen controls.
@@ -20,7 +33,7 @@ Recreate **both** Compose services using the 0.2.0 deployment files; updating on
 - MediaMTX TCP 8554/8889/9997 must remain private. Browser signaling now uses `/api/media` on the application origin; `WEBRTC_PORT` is obsolete. Allow application TCP (8080 by default) and WebRTC UDP (8189 by default).
 - In bridge mode, set `WEBRTC_HOST` to a reachable host address for remote viewers. The optional `compose.lan.yml` requires Linux Docker Engine, Compose 2.24.4+, and free MediaMTX TCP host ports; blank `WEBRTC_HOST` enables host-interface discovery.
 - Restarts invalidate login sessions. For HTTPS configure `COOKIE_SECURE=true` and trusted reverse proxy IPs in `FORWARDED_ALLOW_IPS`.
-- The template selects `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`; use it after the image is published. Source builds can set `NVR_IMAGE=tuponvr:local` and use `--build`.
+- The template selects `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`; use it after the image is published. Contributor build instructions are in [development](docs/development.md).
 
 See [security and migration](docs/security-hardening.md) and [installation](docs/installation.md). An older image may not support newer persistent data; rollback may require the matching pre-upgrade backup.
 

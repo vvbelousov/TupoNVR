@@ -24,18 +24,18 @@ def export_app(tmp_path, monkeypatch):
     jobs.close()
 
 
-def clip(main, video, second=0, duration=4, stamp=None, codec=None, size='64x64'):
+def clip(main, video, second=0, duration=4, stamp=None, codec=None, size='64x64', camera_id=1):
     if codec is None:
         encoders = subprocess.check_output(['ffmpeg', '-hide_banner', '-encoders'], stderr=subprocess.DEVNULL)
         codec = 'libx264' if b'libx264' in encoders else 'libopenh264'
     start = stamp or datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=second)
-    path = video.ROOT / 'default' / '1' / start.strftime('%Y/%m/%d/%H') / (start.strftime('%Y%m%dT%H%M%S') + '.mp4')
+    path = video.ROOT / 'default' / str(camera_id) / start.strftime('%Y/%m/%d/%H') / (start.strftime('%Y%m%dT%H%M%S') + '.mp4')
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', f'testsrc2=size={size}:rate=10',
                     '-t', str(duration), '-c:v', codec, '-g', '10', '-pix_fmt', 'yuv420p', str(path)], check=True)
     with main.db() as c:
         sid = c.execute('INSERT INTO segments(camera_id,path,started_at,ended_at,size_bytes) VALUES(?,?,?,?,?)',
-                        (1, str(path), start.isoformat(), (start + timedelta(seconds=duration)).isoformat(), path.stat().st_size)).lastrowid
+                        (camera_id, str(path), start.isoformat(), (start + timedelta(seconds=duration)).isoformat(), path.stat().st_size)).lastrowid
     return sid, path
 
 
@@ -370,3 +370,190 @@ def test_stream_copy_rejects_corrupt_packet_payload(export_app):
     token = begin(client, start='2020-01-01T00:00:00Z', end='2020-01-01T00:00:04Z', mode='copy').json()['token']
     assert finish(client, token)['state'] == 'failed'
     assert not jobs.pins and not jobs.jobs[token]['directory'].exists()
+
+
+def camera_clip(main, video, cid, second=0, damage=False):
+    sid, path = clip(main, video, second=second, camera_id=cid)
+    if damage:
+        path.write_bytes(b'broken')
+    return sid, path
+
+
+def multi(client, ids, mode='exact', end='2020-01-01T00:00:03Z'):
+    return client.post('/api/recordings/exports', json={'camera_ids': ids,
+                       'start': '2020-01-01T00:00:01Z', 'end': end, 'mode': mode})
+
+
+@pytest.mark.parametrize('mode', ['exact', 'copy'])
+def test_multi_camera_zip_manifest_and_independent_videos(export_app, tmp_path, mode):
+    import io
+    import zipfile
+    main, video, client, jobs = export_app
+    camera_clip(main, video, 1)
+    camera_clip(main, video, 2)
+    response = multi(client, [1, 2], mode)
+    assert response.status_code == 202, response.text
+    token = response.json()['token']
+    status = finish(client, token)
+    assert status['state'] == 'ready' and not status['partial']
+    assert status['format'] == 'zip' and status['completed'] == status['total'] == 2
+    directory = jobs.jobs[token]['directory']
+    response = client.get(f'/api/recordings/exports/{token}/download')
+    assert response.headers['content-type'] == 'application/zip'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['start'] == '2020-01-01T00:00:01+00:00'
+        assert manifest['end'] == '2020-01-01T00:00:03+00:00'
+        assert manifest['mode'] == mode
+        assert [c['camera_id'] for c in manifest['cameras']] == [1, 2]
+        for camera in manifest['cameras']:
+            assert camera['state'] == 'ready' and camera['gaps'] == []
+            filename = camera['filename']
+            assert '/' not in filename and '\\' not in filename and filename.endswith('.mp4')
+            output = tmp_path / filename
+            output.write_bytes(archive.read(filename))
+            subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(output), '-f', 'null', '-'], check=True, capture_output=True)
+    assert not jobs.pins and not directory.exists()
+
+
+@pytest.mark.parametrize('failure', ['no-footage', 'damaged', 'missing'])
+def test_multi_partial_failure_and_manifest_gaps(export_app, failure):
+    import io
+    import zipfile
+    main, video, client, jobs = export_app
+    camera_clip(main, video, 1)
+    _, path = camera_clip(main, video, 2, second=6, damage=failure == 'damaged')
+    if failure == 'no-footage':
+        with main.db() as c:
+            c.execute("INSERT INTO cameras(id,name,rtsp_url) VALUES(2,'Empty','rtsp://camera/live')")
+            c.execute('DELETE FROM segments WHERE camera_id=2')
+    elif failure == 'missing':
+        path.unlink()
+    token = multi(client, [1, 2], end='2020-01-01T00:00:09Z').json()['token']
+    status = finish(client, token)
+    assert status['state'] == 'ready' and status['partial']
+    assert status['cameras'][1]['state'] == 'failed' and status['cameras'][1]['error']
+    assert status['cameras'][0]['gaps'] == [{'start': '2020-01-01T00:00:04+00:00', 'end': '2020-01-01T00:00:09+00:00'}]
+    response = client.get(f'/api/recordings/exports/{token}/download')
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['cameras'] == status['cameras']
+        assert len(archive.namelist()) == 2
+    assert not jobs.pins
+
+
+@pytest.mark.parametrize('ids', [[], [1, 1], [1, 999], [0], [-1], list(range(1, 66))])
+def test_invalid_camera_selection(export_app, ids):
+    main, video, client, jobs = export_app
+    clip(main, video)
+    assert multi(client, ids).status_code == 422
+    assert not jobs.pins and not jobs.jobs
+
+
+def test_ambiguous_camera_request_and_all_empty(export_app):
+    main, _, client, jobs = export_app
+    body = {'start': '2020-01-01T00:00:01Z', 'end': '2020-01-01T00:00:03Z'}
+    assert client.post('/api/recordings/exports', json=body).status_code == 422
+    assert client.post('/api/recordings/exports', json={**body, 'camera_id': 1, 'camera_ids': [1]}).status_code == 422
+    with main.db() as c:
+        c.execute("INSERT INTO cameras(id,name,rtsp_url) VALUES(1,'One','rtsp://one/live'),(2,'Two','rtsp://two/live')")
+    assert multi(client, [1, 2]).status_code == 404
+    assert not jobs.jobs
+
+
+def test_all_multi_camera_processing_failures_cleanup(export_app):
+    main, video, client, jobs = export_app
+    camera_clip(main, video, 1, damage=True)
+    camera_clip(main, video, 2, damage=True)
+    token = multi(client, [1, 2]).json()['token']
+    assert finish(client, token)['state'] == 'failed'
+    assert not jobs.pins and not jobs.jobs[token]['directory'].exists()
+
+
+def test_multi_retention_pins_all_cameras_and_expiry(export_app, monkeypatch):
+    main, video, client, jobs = export_app
+    first, first_path = camera_clip(main, video, 1)
+    second, second_path = camera_clip(main, video, 2)
+    release, entered = threading.Event(), threading.Event()
+    original = jobs.run
+    def blocked(args, deadline):
+        entered.set()
+        assert release.wait(10)
+        original(args, deadline)
+    monkeypatch.setattr(jobs, 'run', blocked)
+    token = multi(client, [1, 2]).json()['token']
+    try:
+        assert entered.wait(3)
+        assert jobs.pins[first_path] == jobs.pins[second_path] == 1
+        assert client.delete(f'/api/recordings/{first}').status_code == 409
+        assert client.delete(f'/api/recordings/{second}').status_code == 409
+        monkeypatch.setattr(video, 'index_segments', lambda *args: None)
+        video.cleanup([], set())
+        assert first_path.exists() and second_path.exists()
+    finally:
+        release.set()
+    assert finish(client, token)['state'] == 'ready'
+    assert not jobs.pins
+    directory = jobs.jobs[token]['directory']
+    jobs.jobs[token]['created'] -= 3601
+    jobs.reap()
+    assert not directory.exists() and not jobs.jobs
+
+
+def test_insufficient_space_rejects_before_pinning(export_app, monkeypatch):
+    from collections import namedtuple
+    import exports
+    main, video, client, jobs = export_app
+    clip(main, video)
+    usage = namedtuple('usage', 'total used free')
+    monkeypatch.setattr(exports.shutil, 'disk_usage', lambda _: usage(100, 99, 1))
+    assert begin(client).status_code == 507
+    assert not jobs.pins and not jobs.jobs
+
+
+@pytest.mark.parametrize('stamp,start,end', [
+    ('2020-01-01T23:59:58+00:00', '2020-01-02T02:59:59+03:00', '2020-01-02T03:00:01+03:00'),
+    ('2026-11-01T05:59:58+00:00', '2026-11-01T01:59:59-04:00', '2026-11-01T01:00:01-05:00'),
+    ('2026-03-08T06:59:58+00:00', '2026-03-08T01:59:59-05:00', '2026-03-08T03:00:01-04:00'),
+])
+def test_multi_camera_midnight_dst_manifest(export_app, stamp, start, end):
+    import io
+    import zipfile
+    main, video, client, jobs = export_app
+    for cid in (1, 2):
+        clip(main, video, stamp=datetime.fromisoformat(stamp), camera_id=cid)
+    response = client.post('/api/recordings/exports', json={'camera_ids': [1, 2], 'start': start, 'end': end})
+    assert response.status_code == 202
+    token = response.json()['token']
+    assert finish(client, token)['state'] == 'ready'
+    response = client.get(f'/api/recordings/exports/{token}/download')
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert datetime.fromisoformat(manifest['start']) == datetime.fromisoformat(start)
+        assert datetime.fromisoformat(manifest['end']) == datetime.fromisoformat(end)
+        assert datetime.fromisoformat(manifest['end']) - datetime.fromisoformat(manifest['start']) == timedelta(seconds=2)
+        assert all(camera['state'] == 'ready' for camera in manifest['cameras'])
+    assert not jobs.pins
+
+
+def test_zip_packaging_failure_cleans_files_and_pins(export_app, monkeypatch):
+    import zipfile
+    main, video, client, jobs = export_app
+    for cid in (1, 2):
+        camera_clip(main, video, cid)
+    def unavailable(*args, **kwargs):
+        raise OSError('Disk full')
+    monkeypatch.setattr(zipfile.ZipFile, 'write', unavailable)
+    token = multi(client, [1, 2]).json()['token']
+    status = finish(client, token)
+    assert status['state'] == 'failed' and status['error']
+    assert not jobs.jobs[token]['directory'].exists() and not jobs.pins
+
+
+def test_list_with_one_camera_keeps_mp4_workflow(export_app, tmp_path):
+    main, video, client, jobs = export_app
+    clip(main, video)
+    token = multi(client, [1]).json()['token']
+    status = finish(client, token)
+    assert status['format'] == 'mp4' and status['state'] == 'ready'
+    inspect_download(client, jobs, token, tmp_path)

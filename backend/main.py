@@ -10,14 +10,15 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import date as CivilDate, time as CivilTime, datetime, timezone, timedelta
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit, unquote
+from urllib.parse import urlsplit, unquote
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, field_validator
 from db import db, init
 from video import MediaGateway, ProcessSupervisor, ROOT, MIN_FREE, cleanup
-from policies import RecordingSchedule, recording_expected, schedule_active
+from policies import recording_expected, schedule_active
+from camera_config import CameraInput, CameraUpdate, editable_url, camera_data
 from storage import StorageMonitor, NAME_PATTERN
 from notifications import Webhooks
 from timeconfig import get_timezone, save_timezone, validate_zone, valid_timezones, day_range, resolve_local
@@ -51,62 +52,6 @@ async def auth(request: Request):
         return
     if not sessions.valid(request.cookies.get('nvr_session', ''), AUTH_USER, AUTH_PASS):
         raise HTTPException(401, 'Authentication required')
-
-class CameraInput(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    rtsp_url: str
-    username: str | None = None
-    password: str | None = None
-    enabled: bool = True
-    recording_enabled: bool = True
-    recording_destination: str = Field(default='default', pattern=r'^[A-Za-z0-9_-]{1,64}$')
-    retention_days: int | None = Field(default=7, ge=1, le=3650)
-    substream_url: str | None = None
-    description: str = Field(default='', max_length=1000)
-    clear_substream: bool = False
-    recording_schedule: RecordingSchedule | None = None
-
-    @field_validator('rtsp_url', 'substream_url')
-    @classmethod
-    def valid_url(cls, value, info):
-        if value is None:
-            return value
-        if value == '' and (info.field_name == 'substream_url' or cls is CameraUpdate):
-            # Legacy updates use an empty main URL to preserve the saved source.
-            return value
-        try:
-            u = urlsplit(value)
-            if u.scheme not in ('rtsp', 'rtsps') or not u.hostname or u.fragment:
-                raise ValueError()
-            _ = u.port
-        except ValueError:
-            raise ValueError('Expected RTSP URL') from None
-        return value
-
-class CameraUpdate(CameraInput):
-    # Defaults permit omission, while explicit null still fails validation for
-    # non-nullable fields. Update uses only fields actually supplied.
-    name: str = Field(default=None, min_length=1, max_length=100)
-    rtsp_url: str = None
-
-
-def editable_url(value):
-    if not value:
-        return value
-    parsed = urlsplit(value)
-    # Query options may contain vendor tokens. Keep them write-only, like auth.
-    return urlunsplit((parsed.scheme, parsed.netloc.rsplit('@', 1)[-1], parsed.path, '', ''))
-
-
-def preserve_url_secrets(value, old):
-    if not value or not old:
-        return value
-    current, previous = urlsplit(value), urlsplit(old)
-    host = current.netloc
-    if '@' not in host and '@' in previous.netloc:
-        host = previous.netloc.rsplit('@', 1)[0] + '@' + host
-    return urlunsplit((current.scheme, host, current.path, current.query or previous.query, ''))
-
 
 class LayoutInput(BaseModel):
     columns: int = Field(ge=1, le=12)
@@ -164,6 +109,8 @@ async def lifespan(app):
     log.warning('MediaMTX HTTP/API/RTSP must remain private; publishing them bypasses application authentication')
     get_timezone()  # Fail startup clearly for invalid/corrupt time configuration.
     init()
+    from camera_yaml import bootstrap
+    bootstrap()
     from exports import jobs
     jobs.startup()
     ROOT.mkdir(parents=True, exist_ok=True)
@@ -440,13 +387,7 @@ def browser_language():
 
 @app.post('/api/cameras', dependencies=[Depends(auth)], status_code=201)
 async def add(camera: CameraInput, request: Request):
-    data = camera.model_dump()
-    data.pop('clear_substream')
-    data['recording_schedule'] = json.dumps(data['recording_schedule']) if data['recording_schedule'] else None
-    if not data['rtsp_url']:
-        raise HTTPException(422, 'RTSP URL required')
-    if not data['substream_url']:
-        data['substream_url'] = None
+    data = camera_data(camera)
     with db() as c:
         cur = c.execute('INSERT INTO cameras(name,rtsp_url,username,password,enabled,recording_enabled,recording_destination,retention_days,substream_url,description,recording_schedule) VALUES(:name,:rtsp_url,:username,:password,:enabled,:recording_enabled,:recording_destination,:retention_days,:substream_url,:description,:recording_schedule)', data)
         cid = cur.lastrowid
@@ -455,6 +396,66 @@ async def add(camera: CameraInput, request: Request):
     except Exception:
         log.warning('camera_sync_pending camera_id=%d', cid)
     return public(one(cid))
+
+# Portable camera configuration uses the same authentication as camera CRUD.
+@app.get('/api/camera-config/export', dependencies=[Depends(auth)])
+def export_camera_config(include_credentials: bool = False):
+    from camera_yaml import export_yaml
+    return Response(export_yaml(rows(), include_credentials), media_type='application/yaml',
+                    headers={'Content-Disposition': 'attachment; filename="cameras.yaml"', 'Cache-Control': 'no-store'})
+
+
+async def camera_yaml_body(request):
+    from camera_yaml import MAX_BYTES
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > MAX_BYTES:
+            raise HTTPException(413, 'YAML exceeds 1 MiB')
+    return bytes(content)
+
+
+@app.post('/api/camera-config/preview', dependencies=[Depends(auth)])
+async def preview_camera_config(request: Request):
+    from camera_yaml import plan
+    preview, _ = plan(await camera_yaml_body(request), rows())
+    return JSONResponse(preview, headers={'Cache-Control': 'no-store'})
+
+
+@app.post('/api/camera-config/apply', dependencies=[Depends(auth)])
+async def apply_camera_config(request: Request):
+    from camera_yaml import plan, write
+    import sqlite3
+    if request.headers.get('X-Confirm-Import') != 'true':
+        raise HTTPException(422, 'Explicit import confirmation required')
+    content = await camera_yaml_body(request)
+    try:
+        with db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            current = c.execute('SELECT * FROM cameras ORDER BY id').fetchall()
+            preview, writes = plan(content, current)
+            if preview['errors'] or preview['conflicts']:
+                return JSONResponse(preview, status_code=422, headers={'Cache-Control': 'no-store'})
+            fingerprint = request.headers.get('X-Import-Fingerprint', '')
+            if not re.fullmatch(r'[0-9a-f]{64}', fingerprint) or not secrets.compare_digest(preview['fingerprint'], fingerprint):
+                raise HTTPException(409, 'Camera configuration changed; preview again')
+            write(c, writes)
+    except sqlite3.Error:
+        log.warning('camera_import_database_failed')
+        raise HTTPException(503, 'Camera import failed; no changes applied') from None
+    runtime_pending = False
+    try:
+        for cid, _ in writes:
+            if cid is not None:
+                await invalidate_diagnostics(request.app.state.gateway, cid)
+        await reconcile(request)
+    except Exception:
+        runtime_pending = True
+        log.warning('camera_import_sync_pending')
+    return JSONResponse({'created': len(preview['create']), 'updated': len(preview['update']),
+                         'unchanged': len(preview['unchanged']), 'runtime_pending': runtime_pending},
+                        headers={'Cache-Control': 'no-store'})
+
 
 @app.get('/api/cameras/{cid}', dependencies=[Depends(auth)])
 def camera(cid: int):
@@ -474,35 +475,7 @@ def editable_camera(cid: int):
 @app.put('/api/cameras/{cid}', dependencies=[Depends(auth)])
 async def update(cid: int, camera: CameraUpdate, request: Request):
     old = one(cid)
-    changes = camera.model_dump(exclude_unset=True)
-    clear_substream = changes.pop('clear_substream', False)
-    if 'recording_schedule' in changes:
-        changes['recording_schedule'] = json.dumps(changes['recording_schedule']) if changes['recording_schedule'] else None
-    # Preserve the previous blank-field contract as well as partial updates.
-    for key in ('rtsp_url', 'substream_url'):
-        if key in changes:
-            if key == 'substream_url' and changes[key] is None and request.method == 'PATCH':
-                continue
-            if not changes[key]:
-                changes.pop(key)
-            else:
-                changes[key] = preserve_url_secrets(changes[key], old[key])
-    if clear_substream:
-        changes['substream_url'] = None
-    if not changes.get('password'):
-        changes.pop('password', None)
-    if changes.get('username', '') is None:
-        changes.pop('username', None)
-    data = {**dict(old), **changes}
-    if changes.get('password') and not data['username']:
-        data['username'] = unquote(urlsplit(data['rtsp_url']).username or '') or None
-    if changes.get('username') and not data['password']:
-        data['password'] = unquote(urlsplit(data['rtsp_url']).password or '') or None
-    if changes.get('username') == '':
-        for key in ('rtsp_url', 'substream_url'):
-            if data[key]:
-                parsed = urlsplit(data[key])
-                data[key] = urlunsplit((parsed.scheme, parsed.netloc.rsplit('@',1)[-1], parsed.path, parsed.query, ''))
+    data = camera_data(camera, old, request.method == 'PATCH')
     data['id'] = cid
     with db() as c:
         c.execute('UPDATE cameras SET name=:name,rtsp_url=:rtsp_url,username=:username,password=:password,enabled=:enabled,recording_enabled=:recording_enabled,recording_destination=:recording_destination,retention_days=:retention_days,substream_url=:substream_url,description=:description,recording_schedule=:recording_schedule WHERE id=:id', data)
@@ -973,7 +946,8 @@ def segment(sid):
     return path
 
 class ExportInput(BaseModel):
-    camera_id: int = Field(gt=0)
+    camera_id: int | None = Field(default=None, gt=0)
+    camera_ids: list[int] | None = Field(default=None, min_length=1, max_length=64)
     start: datetime
     end: datetime
     mode: str = Field(default='exact', pattern=r'^(exact|copy)$')
@@ -983,7 +957,9 @@ class ExportInput(BaseModel):
 def create_export(value: ExportInput):
     from exports import jobs
     start, end = archive_range(value.start, value.end)
-    return jobs.create(value.camera_id, start, end, value.mode, segment)
+    if (value.camera_id is None) == (value.camera_ids is None):
+        raise HTTPException(422, 'Provide camera_id or camera_ids')
+    return jobs.create(value.camera_id, start, end, value.mode, segment, value.camera_ids)
 
 
 @app.get('/api/recordings/exports/{token}', dependencies=[Depends(auth)])
@@ -1004,7 +980,8 @@ def export_download(token: str):
             finally:
                 jobs.finish_download(token)
 
-    return ExportResponse(job['directory'] / 'export.mp4', media_type='video/mp4', filename=job['filename'])
+    return ExportResponse(job['directory'] / ('export.' + job['format']),
+                          media_type='application/zip' if job['format'] == 'zip' else 'video/mp4', filename=job['filename'])
 
 
 @app.get('/api/recordings/{sid}', dependencies=[Depends(auth)])

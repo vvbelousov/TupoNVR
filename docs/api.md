@@ -26,3 +26,5 @@ When authentication is enabled, `POST /api/login` creates an HttpOnly session co
 `/health` and `/ready` are public; `/metrics` requires login when configured. OpenAPI describes current schemas; `{id}` names here are illustrative.
 
 [Export and time APIs](time-and-archive.md#api-additions) and [manual cleanup APIs](recording-cleanup.md#architecture-and-api) are documented in their guides.
+
+Camera YAML settings: [schema, bootstrap and import/export API](camera-configuration.md).

@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -50,6 +51,16 @@ def init():
             c.execute('DROP TABLE cameras')
             c.execute('ALTER TABLE cameras_new RENAME TO cameras')
         columns = {row[1] for row in c.execute('PRAGMA table_info(cameras)')}
+        if 'key' not in columns:
+            c.execute('ALTER TABLE cameras ADD COLUMN key TEXT')
+        for row in c.execute("SELECT id FROM cameras WHERE key IS NULL OR key=''").fetchall():
+            c.execute('UPDATE cameras SET key=? WHERE id=?', (uuid.uuid4().hex, row['id']))
+        c.executescript("""
+        CREATE UNIQUE INDEX IF NOT EXISTS cameras_key ON cameras(key);
+        CREATE TRIGGER IF NOT EXISTS cameras_assign_key AFTER INSERT ON cameras
+        WHEN NEW.key IS NULL OR NEW.key=''
+        BEGIN UPDATE cameras SET key=lower(hex(randomblob(16))) WHERE id=NEW.id; END;
+        """)
         if 'recording_schedule' not in columns:
             c.execute('ALTER TABLE cameras ADD COLUMN recording_schedule TEXT')
         c.executescript('''

@@ -1,5 +1,5 @@
 # Linux Docker Engine, Compose >= 2.24.4. Native MediaMTX interface discovery.
-# docker compose -f docker-compose.yml -f compose.lan.yml up -d --build
+# docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build
 services:
   mediamtx:
     network_mode: host
