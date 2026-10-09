@@ -48,6 +48,6 @@ docker compose -f docker-compose.yml -f compose.image.yml pull
 docker compose -f docker-compose.yml -f compose.image.yml up -d --no-build
 ```
 
-For LAN, add `-f compose.lan.yml` after the base file in **both** commands. For a source build, update the reviewed source and run `docker compose up -d --build` with the configured local `NVR_IMAGE` and deployment files. Check `/health`, `/ready`, storage readiness, and recording progress afterward. The application performs its existing database upgrades at startup. An older image may not support an upgraded database; rollback can require restoring the matching pre-upgrade data backup. Do not delete persistent directories when recreating containers.
+For LAN, add `-f compose.lan.yml` after the base file in **both** commands. Check `/health`, `/ready`, storage readiness, and recording progress afterward. The application performs its existing database upgrades at startup. An older image may not support an upgraded database; rollback can require restoring the matching pre-upgrade data backup. Do not delete persistent directories when recreating containers.
 
 To recover, keep the application stopped, restore the complete matching backup with the expected ownership and storage mounts, select the matching application version, and start it. Check destination IDs and readiness before recording. Verify your backup procedure on disposable data; recovery has no dedicated UI or automatic migration rollback.

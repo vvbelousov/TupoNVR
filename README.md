@@ -20,27 +20,31 @@ Watch IP cameras live, record their video, and find footage on a shared archive 
 
 ## Quick Start
 
-Requires **Linux, Git, Docker Engine, Docker Compose 2.24.4+**, network access to RTSP cameras, and writable storage with more than the default **5 GiB** free-space reserve. Use a modern WebRTC/MP4-capable browser; H.264 is the starting point. Host Python, Node, and FFmpeg are unnecessary.
+Requires **Linux, Docker Engine, Docker Compose 2.24.4+**, network access to RTSP cameras, and writable storage with more than the default **5 GiB** free-space reserve. Use a modern WebRTC/MP4-capable browser; H.264 is the starting point. Host Python, Node, and FFmpeg are unnecessary.
 
-1. Get the source and configuration:
+1. Download the deployment configuration (curl or a browser; no source checkout):
 
    ```sh
-   git clone --branch dev https://github.com/vvbelousov/TupoNVR.git
+   mkdir -p TupoNVR
    cd TupoNVR
+   for file in docker-compose.yml compose.lan.yml mediamtx.yml .env.example; do
+     curl -fL "https://raw.githubusercontent.com/vvbelousov/TupoNVR/dev/$file" -o "$file"
+   done
    cp .env.example .env
    ```
 
-2. Edit `.env`: set `NVR_IMAGE=tuponvr:local` and `NVR_BIND=0.0.0.0`, set both `AUTH_USERNAME` and `AUTH_PASSWORD`, and leave `WEBRTC_HOST` blank. Local recordings use `./recordings`; mount external storage before using it. Allow **TCP 8080 and UDP 8189** for trusted viewers; host TCP ports **8554, 8889, 9997** must be free.
+2. Edit `.env`: set `NVR_IMAGE=vvbelousov/tuponvr:0.2.0` and `NVR_BIND=0.0.0.0`, set both `AUTH_USERNAME` and `AUTH_PASSWORD`, and leave `WEBRTC_HOST` blank. Local recordings use `./recordings`; mount external storage before using it. Allow **TCP 8080 and UDP 8189** for trusted viewers; host TCP ports **8554, 8889, 9997** must be free.
 
-3. Build this checkout and start it:
+3. Pull the pinned Docker Hub image and start it:
 
    ```sh
-   docker compose -f docker-compose.yml -f compose.lan.yml up -d --build
+   docker compose -f docker-compose.yml -f compose.lan.yml pull
+   docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build
    ```
 
 4. Open **`http://<host-address>:8080`** and log in. Set your timezone in **Account → Preferences**. In **Cameras**, add a main RTSP URL and camera credentials, use **Check**, and verify **Writing** in **Overview**. Cameras and recording start enabled when storage is ready. Open **Watch** for live video; Archive needs a closed segment (normally about 10 minutes or the next hour boundary) and indexing, which can take another five minutes.
 
-This Linux LAN option uses host networking with MediaMTX TCP listeners on loopback. **Application login does not protect direct MediaMTX access**; keep those endpoints private and trust local host processes. Use the same Compose files for subsequent commands. See [installation](docs/installation.md) for published images, localhost/bridge deployment, and [security](docs/security-hardening.md) for HTTPS and VPN access.
+This Linux LAN option uses host networking with MediaMTX TCP listeners on loopback. **Application login does not protect direct MediaMTX access**; keep those endpoints private and trust local host processes. Use the same Compose files for subsequent commands. See [installation](docs/installation.md) for localhost/bridge deployment, and [security](docs/security-hardening.md) for HTTPS and VPN access.
 
 ## Documentation
 

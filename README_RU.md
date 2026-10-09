@@ -20,27 +20,31 @@
 
 ## Быстрый старт
 
-Нужны **Linux, Git, Docker Engine, Docker Compose 2.24.4+**, сетевой доступ к RTSP-камерам и доступное для записи хранилище со свободным местом сверх стандартного резерва **5 GiB**. Используйте современный браузер с WebRTC и MP4; начните с H.264. Python, Node и FFmpeg на хосте не нужны.
+Нужны **Linux, Docker Engine, Docker Compose 2.24.4+**, сетевой доступ к RTSP-камерам и доступное для записи хранилище со свободным местом сверх стандартного резерва **5 GiB**. Используйте современный браузер с WebRTC и MP4; начните с H.264. Python, Node и FFmpeg на хосте не нужны.
 
-1. Получите исходники и конфигурацию:
+1. Скачайте конфигурацию установки (curl или браузер; исходники не нужны):
 
    ```sh
-   git clone --branch dev https://github.com/vvbelousov/TupoNVR.git
+   mkdir -p TupoNVR
    cd TupoNVR
+   for file in docker-compose.yml compose.lan.yml mediamtx.yml .env.example; do
+     curl -fL "https://raw.githubusercontent.com/vvbelousov/TupoNVR/dev/$file" -o "$file"
+   done
    cp .env.example .env
    ```
 
-2. Измените `.env`: задайте `NVR_IMAGE=tuponvr:local`, `NVR_BIND=0.0.0.0`, обе переменные `AUTH_USERNAME` и `AUTH_PASSWORD`, оставьте `WEBRTC_HOST` пустым. Локальные записи хранятся в `./recordings`; внешнее хранилище сначала смонтируйте. Разрешите доверенным зрителям **TCP 8080 и UDP 8189**; TCP-порты хоста **8554, 8889, 9997** должны быть свободны.
+2. Измените `.env`: задайте `NVR_IMAGE=vvbelousov/tuponvr:0.2.0`, `NVR_BIND=0.0.0.0`, обе переменные `AUTH_USERNAME` и `AUTH_PASSWORD`, оставьте `WEBRTC_HOST` пустым. Локальные записи хранятся в `./recordings`; внешнее хранилище сначала смонтируйте. Разрешите доверенным зрителям **TCP 8080 и UDP 8189**; TCP-порты хоста **8554, 8889, 9997** должны быть свободны.
 
-3. Соберите эту версию исходников и запустите:
+3. Загрузите образ Docker Hub с фиксированной версией и запустите:
 
    ```sh
-   docker compose -f docker-compose.yml -f compose.lan.yml up -d --build
+   docker compose -f docker-compose.yml -f compose.lan.yml pull
+   docker compose -f docker-compose.yml -f compose.lan.yml up -d --no-build
    ```
 
 4. Откройте **`http://<host-address>:8080`** и войдите. Задайте часовой пояс в **Аккаунт → Предпочтения**. В **Камерах** добавьте основной RTSP URL и учётные данные камеры, нажмите **Проверить**, убедитесь в статусе **Пишет** в **Обзоре**. Камеры и запись по умолчанию включены и работают при готовом хранилище. **Смотреть** открывает прямой эфир; для архива нужен завершённый сегмент (обычно около 10 минут или ближайшая граница часа) и индексирование, которое может занять ещё пять минут.
 
-Этот вариант для Linux LAN использует сеть хоста; TCP-службы MediaMTX слушают loopback. **Вход в приложение не защищает прямой доступ к MediaMTX**: держите эти endpoints закрытыми и доверяйте локальным процессам хоста. В последующих командах используйте те же Compose-файлы. [Установка](docs/installation_RU.md) описывает готовые образы и localhost/bridge-режим, [безопасность](docs/security-hardening_RU.md) — HTTPS и доступ через VPN.
+Этот вариант для Linux LAN использует сеть хоста; TCP-службы MediaMTX слушают loopback. **Вход в приложение не защищает прямой доступ к MediaMTX**: держите эти endpoints закрытыми и доверяйте локальным процессам хоста. В последующих командах используйте те же Compose-файлы. [Установка](docs/installation_RU.md) описывает localhost/bridge-режим, [безопасность](docs/security-hardening_RU.md) — HTTPS и доступ через VPN.
 
 ## Документация
 

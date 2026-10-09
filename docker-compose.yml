@@ -12,10 +12,7 @@ services:
       MTX_WEBRTCLOCALUDPADDRESS: ":${WEBRTC_UDP_PORT:-8189}"
       MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_HOST:-127.0.0.1}
   nvr-app:
-    image: ${NVR_IMAGE:-tuponvr:local}
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ${NVR_IMAGE:-vvbelousov/tuponvr:0.2.0}
     restart: unless-stopped
     init: true
     user: "${NVR_UID:-0}:${NVR_GID:-0}"
